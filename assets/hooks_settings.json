@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{PYTHON}} {{GUARD}}",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

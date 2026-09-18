@@ -1,0 +1,5 @@
+{
+  "_comment": "评测 harness 的 benchmark 相关约定：官方评测命令形状、协议源码位置。原先散在 step0_baseline / step0_protocol 的 prompt 里硬编码（evaluate.py / templates/ / Scorer / --model-path），一旦切到别的 benchmark 或 harness 就会误导 specialist。抽到这一份里集中管理，切换时只改这个文件、不动通用角色 prompt。orchestrator.build_prompt 读取后注入为 {{EVAL_CMD_HINT}} 与 {{PROTOCOL_SOURCES}}；eval_cmd_hint 里的 {{MODEL}} 由 orchestrator 用实际基座替换。",
+  "eval_cmd_hint": "python evaluate.py --model-path {{MODEL}} ...",
+  "protocol_sources": ["`evaluate.py`", "`templates/`", "Scorer 实现", "相关配置文件"]
+}
