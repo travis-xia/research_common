@@ -20,6 +20,10 @@
 ---
 
 ## 2. 工程部署与基础设施 (Engineering)
+- **[机器与运行时环境使用指南](engineering/env_and_hardware.md)** (`skills/engineering/env_and_hardware.md`)
+  - *触发时机*：判断显卡是否空闲、遇到显存误判/网络代理/下载大文件断流/磁盘空间检查时。
+  - *核心内容*：nvidia-smi 显存假象与 Processes 表判空标准、多连接下载工具、代理配置、磁盘配额与超时。
+
 - **[HuggingFace 高速多连接下载](engineering/hf_download.md)** (`skills/engineering/hf_download.md`)
   - *触发时机*：需要从 HuggingFace 拉取大于 50MB 的大型数据集或权重时。
   - *核心内容*：本地网络代理配置、aria2c 多连接加速脚本 `hf-dl.sh` 的使用方法及规避 10MiB 断流。

@@ -4,7 +4,7 @@
   主编排器：orchestrator.py
   节点提示词：prompts/
   守卫等资源：assets/
-  操作空间：action_space.json
+  任务操作空间：tasks/ (默认 tasks/post_train/action_space.json)
   步长策略：assets/step_policy.json
 Codex 入口：/root/ComateProjects/chats/myptbench/PostTrainBench/agents/codex_research/solve.sh
 Claude 入口：/root/ComateProjects/chats/myptbench/PostTrainBench/agents/claude_research/solve.sh

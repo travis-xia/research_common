@@ -1,0 +1,45 @@
+{
+  "_comment": "流程记录.md 操作空间表的机器可读形式。猜想必须把靶点落在某个 (domain, module) 坐标上，否则 orchestrator 直接判无效。frozen=true 的坐标禁止干预。每个 module 的 desc 仅界定该靶点的职责范畴并提供典型示例，并非穷举白名单，具体算法、机制和策略完全开放探索。每个 module 都显式带 layer，编排器按本轮允许的层级从这里取坐标池，分给并行候选（同一轮内坐标互斥）。",
+  "domains": {
+    "Harness": {
+      "layer": "exec",
+      "modules": {
+        "Prompt": {"desc": "评估/推理提示词与模板对齐、Few-shot/Zero-shot 设计、系统提示等", "layer": "exec", "frozen": false},
+        "ToolSkills": {"desc": "扩展/修改可用工具与 skills、外部搜索/执行插件等", "layer": "exec", "frozen": false},
+        "Memory": {"desc": "历史经验与轨迹读写机制、检索增强、状态管理等", "layer": "exec", "frozen": false},
+        "Orchestration": {"desc": "多 agent / 流程控制逻辑", "layer": "strategy", "frozen": true,
+          "frozen_reason": "本 harness 自身就是被评估对象，节点内不得改编排器"}
+      }
+    },
+    "Model": {
+      "layer": "strategy",
+      "modules": {
+        "InternalArch": {"desc": "模型架构微调 / 层选择、注意力机制改造、位置编码、剪枝稀疏化等", "layer": "strategy", "frozen": false},
+        "ExternalModule": {"desc": "外挂 Adapter / 辅助 Head / 外部模块、Verifier/PRM 外挂、轻量接入层等", "layer": "strategy", "frozen": false}
+      }
+    },
+    "Training": {
+      "layer": "strategy",
+      "modules": {
+        "Data": {"desc": "数据配比、筛选、拒绝采样、长 CoT 蒸馏、合成数据、清洗与难度分级等", "layer": "strategy", "frozen": false},
+        "Method": {"desc": "loss、监督信号、更新规则、全参 SFT / LoRA、SFT 冷启动后 RL、Curriculum、Model Merge，以及 DPO / GRPO / PPO 等对齐与学习范式（不限于此）", "layer": "strategy", "frozen": false},
+        "Hyperparams": {"desc": "LR、Batch Size、Epochs、Warmup、优化器及调度策略超参等", "layer": "exec", "frozen": false}
+      }
+    },
+    "Inference": {
+      "layer": "exec",
+      "modules": {
+        "Decoding": {"desc": "Greedy / Sampling / Temperature / Top-p / Maj@k、Best-of-N、MCTS、自洽性与测试时搜索策略等", "layer": "exec", "frozen": false},
+        "Hyperparams": {"desc": "生成上限 max_tokens、截断惩罚、stop token、惩罚系数等", "layer": "exec", "frozen": false}
+      }
+    },
+    "Others": {
+      "layer": "exec",
+      "modules": {
+        "Infra": {"desc": "算力配置、并发数、环境依赖、推理与训练加速框架等", "layer": "exec", "frozen": false},
+        "EvalProtocol": {"desc": "官方评测协议本体", "layer": "strategy", "frozen": true,
+          "frozen_reason": "bench 规则：不得修改 evaluate.py 与 templates/"}
+      }
+    }
+  }
+}

@@ -39,6 +39,8 @@ NODES = RES / "nodes"
 AGENT_DIR = Path(os.environ["RESEARCH_AGENT_DIR"]).resolve()
 PROMPTS = AGENT_DIR / "prompts"
 ASSETS = AGENT_DIR / "assets"
+TASKS_DIR = AGENT_DIR / "tasks"
+TASK_TYPE = os.environ.get("RESEARCH_TASK_TYPE", "post_train")
 SETTINGS = RES / "settings.json"
 STATE_F = RES / "state.json"
 JOURNAL = RES / "journal.md"
@@ -451,6 +453,7 @@ def build_prompt(step_file: str, node_d: Path, contract: Path, extra: dict,
         # 本机操作手册目录（skills/）：需要的节点按触发条件给单行指针
         "SKILLS_DIR": AGENT_DIR / "skills",
         "CONTRACT_PATH": contract,
+        "WORKFLOW_OVERVIEW_PATH": "research/WORKFLOW_OVERVIEW.md",
     }
 
     # 每个节点的 prompt 都是自足的（2026-09-10 用户决策：删掉 common_context.md）——
@@ -2173,9 +2176,14 @@ def bootstrap() -> None:
     RES.mkdir(parents=True, exist_ok=True)
     NODES.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ASSETS / "guard.py", RES / "guard.py")
-    shutil.copy2(AGENT_DIR / "action_space.json", RES / "action_space.json")
+    act_space_src = TASKS_DIR / TASK_TYPE / "action_space.json"
+    if not act_space_src.is_file():
+        act_space_src = AGENT_DIR / "action_space.json"
+    shutil.copy2(act_space_src, RES / "action_space.json")
     shutil.copy2(ASSETS / "step_policy.json", RES / "step_policy.json")
     shutil.copy2(ASSETS / "benchmark_profile.json", RES / "benchmark_profile.json")
+    if (PROMPTS / "WORKFLOW_OVERVIEW.md").is_file():
+        shutil.copy2(PROMPTS / "WORKFLOW_OVERVIEW.md", RES / "WORKFLOW_OVERVIEW.md")
     tpl = (ASSETS / "hooks_settings.json").read_text(encoding="utf-8")
     SETTINGS.write_text(render(tpl, {"PYTHON": sys.executable,
                                      "GUARD": str(RES / "guard.py")}), encoding="utf-8")
