@@ -46,7 +46,7 @@
 
 - **Output Requirements (产物契约与输出限制)**:
   - 必须输出产物文件: `{{CONTRACT_PATH}}`
-  - 请以清晰的 Markdown 格式输出，必须包含以下二级标题与 Frontmatter：
+  - 严格按照下方给出的 Markdown 格式输出，严禁擅自增删或篡改大章节标题，严禁在正文中附加额外无关章节，简练传达结论；必须包含以下二级标题与 Frontmatter：
 
 ```markdown
 ---

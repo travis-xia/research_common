@@ -84,6 +84,10 @@ PLAN_TRIGGER_H = float(os.environ.get("RESEARCH_PLAN_TRIGGER_H", "1.5"))
 # 复核，那是评测方的活；现在只是在动手前把工程细节顺一遍，发现问题当场改，结论给 Engineer_1）。
 # 唯一有硬配额的中间节点：它便宜才有意义，超过这个数就该怀疑它又跑去做实验了。
 PREFLIGHT_MIN = int(os.environ.get("RESEARCH_PREFLIGHT_MIN", "35"))
+# 单节点硬性 kill 默认关闭：节点超出自己的墙钟上限不再被 SIGKILL，让它自然跑完/自行收尾。
+# 唯一保留的硬停是全局墙钟（605m timeout + _on_term 收尾保存 final_model）。
+# 需要恢复单节点强杀时设 RESEARCH_NODE_HARD_KILL=1。
+NODE_HARD_KILL = os.environ.get("RESEARCH_NODE_HARD_KILL", "0") == "1"
 MAX_NODES = int(os.environ.get("RESEARCH_MAX_NODES", "40"))
 JOURNAL_TAIL = int(os.environ.get("RESEARCH_JOURNAL_TAIL", "8"))
 USE_AGENTS = os.environ.get("RESEARCH_USE_AGENTS", "1") == "1"
@@ -410,20 +414,6 @@ def build_prompt(step_file: str, node_d: Path, contract: Path, extra: dict,
                  state: dict, timeout_min: float, phase: str | None = None) -> str:
     # 并行节点不能依赖共享的 .phase 推断自己的阶段；调用方直接传入才没有竞态。
     phase = phase or cur_phase()
-    # 注入瘦身（2026-09-09 用户决策）：golden_run.recipe 与 golden_init.golden_recipe
-    # 逐字相同，重复注入每个 prompt 白付 ~6KB——只有两者分叉（正常不会发生）才保留原文。
-    golden_init = read_json(RES / "golden_init.json") or {}
-    golden_run = read_json(RES / "golden_run.json") or {}
-    if golden_run.get("recipe") and golden_run["recipe"] == golden_init.get("golden_recipe"):
-        golden_run["recipe"] = ("（与 golden_init.golden_recipe 相同，注入时省略；"
-                                "原文见 research/golden_run.json）")
-    # 注入瘦身（2026-09-14 用户决策）：golden_recipe 与 data_research 只被少数节点消费，
-    # 对所有节点白付 ~15KB。synthesis 写配方时直接读盘上的 literature.json（它运行时
-    # golden_init.json 还不存在，本块注入对它无效）；Golden Run 节点通过 {{HYPOTHESIS}}
-    # 已拿到完整配方。所以只留一行带路径的指路注释，需要时按路径打开阅读，不塞进每个 prompt。
-    golden_init["golden_recipe"] = ("（完整配方不随本块注入：Golden Run 节点执行时已在「本次实验」"
-                                    "注入里拿到同一份；需要时打开 research/golden_recipe.md 阅读）")
-    golden_init["data_research"] = ("（数据调研详情不随本块注入：需要时打开 research/literature.md 阅读）")
     # benchmark 相关约定（评测命令形状、协议源码位置）从 assets/benchmark_profile.json 读，
     # 不再写死在 prompt 里——切 benchmark/harness 时只改那一份。缺文件时退回 PostTrainBench 默认。
     bp = read_json(RES / "benchmark_profile.json") or {}
@@ -438,8 +428,6 @@ def build_prompt(step_file: str, node_d: Path, contract: Path, extra: dict,
         # 子进程直接继承宿主环境变量（不设 GPU 租约，任何阶段都可以用自己的卡）
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
         "PROTOCOL": protocol_for_prompt(),
-        "GOLDEN_INIT": inject_json(golden_init),
-        "GOLDEN_RUN": inject_json(golden_run),
         "BEST_SUMMARY": best_summary(state),
         "JOURNAL": journal_for_prompt(state),
         "ACTION_SPACE": inject_json(
@@ -538,9 +526,13 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
             except ProcessLookupError:
                 pass
 
-        killer = threading.Timer(timeout_s or timeout_min * 60, kill_process_group)
-        killer.daemon = True
-        killer.start()
+        # 硬性节点 kill 已默认取消（见 NODE_HARD_KILL）：不再在节点墙钟上限 SIGKILL 进程组，
+        # 让节点自然跑完 / 自行收尾；唯一硬停是全局墙钟与 _on_term 收尾保存 final_model。
+        killer = None
+        if NODE_HARD_KILL:
+            killer = threading.Timer(timeout_s or timeout_min * 60, kill_process_group)
+            killer.daemon = True
+            killer.start()
         try:
             proc.stdin.write(prompt)
             proc.stdin.close()
@@ -560,7 +552,8 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
                         pass
             rc = proc.wait()
         finally:
-            killer.cancel()
+            if killer is not None:
+                killer.cancel()
 
     err_kind = "api" if saw_api_err else None
     cost = None
@@ -607,7 +600,7 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
                 "- 基线得分: 0.30 (n=1319)\n\n"
                 "## 2. 失败原因分桶与占比\n- 格式错误: ~30%\n- 推理错误: ~40%\n\n"
                 "## 3. 代表性 Bad Cases\n- dry：答案已算出但未落入提取框。\n")
-        (RES / "baseline_analysis.json").write_text(_md(fm, body), encoding="utf-8")
+        (RES / "baseline.md").write_text(_md(fm, body), encoding="utf-8")
         return 0
 
     if label == "golden_literature":
@@ -1090,7 +1083,7 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
             deny_tools=["WebSearch", "WebFetch"], retries=1,
             total_budget_min=protocol_min, text_contract=True),
         lambda: run_node(
-            "step0_baseline.md", baseline_d, RES / "baseline_analysis.json",
+            "step0_baseline.md", baseline_d, RES / "baseline.md",
             "golden_baseline", "golden_baseline",
             ["## 1. 评测执行与得分", "## 2. 失败原因分桶与占比"],
             state, timeout_min=baseline_min,
@@ -1150,14 +1143,13 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
             "_body": b_body,
         }
 
-    # synthesis 的 prompt 点名要读 research/literature.json；文献节点现在只写 literature.md，
-    # 补一份同名副本，让 prompt 里的两个引用都能命中。
+    # synthesis 的 prompt 读 research/literature.md；若历史遗留有对 .json 的引用，做一次容错兜底
     lit_md = RES / "literature.md"
-    if lit_md.is_file():
+    if lit_md.is_file() and not (RES / "literature.json").is_file():
         try:
             shutil.copy2(lit_md, RES / "literature.json")
-        except Exception as exc:
-            log(f"WARN 复制 literature.md -> literature.json 失败: {exc!r}")
+        except Exception:
+            pass
 
     synthesis_left_s = int(golden_deadline - time.monotonic())
     synthesis = None
@@ -1205,18 +1197,24 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
     # 起步方案不再字段化：配方正文本身就是主干规划，这里只留一行指路供注入。
     base_plan = "见 research/golden_recipe.md（synthesis 定稿的主干配方与统一尺子）"
 
+    # 供编排器状态恢复使用的精简 baseline 字典（移除庞大的 _body 正文，仅保留核心量化指标）
+    clean_baseline = {
+        "status": baseline_dict.get("status", "partial"),
+        "official": baseline_dict.get("official") or {},
+    }
+
     artifacts = list(dict.fromkeys(
-        [f"research/{PROTOCOL_MD}", "research/baseline_analysis.json",
+        [f"research/{PROTOCOL_MD}", "research/baseline.md",
          "research/literature.md", "research/golden_recipe.md",
          "research/nodes/n000-golden-synthesis/golden_synthesis.md"]))
     obj = {
         "schema_version": 4,
         "status": status,
         "component_status": component_status,
-        "baseline": baseline_dict,
+        "baseline": clean_baseline,
         "data_research": "（外部数据与范式证据详见 research/literature.md）",
         "base_plan": base_plan,
-        "golden_recipe": recipe,
+        "golden_recipe": "见 research/golden_recipe.md",
         "ruler": ruler,
         "first_targets": [],
         "artifacts": artifacts,
@@ -1228,7 +1226,7 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
     # 配方单独落一份 Markdown：Golden Run 直接读它，续跑也不依赖 golden_init.json 的结构
     (RES / "golden_recipe.md").write_text(recipe, encoding="utf-8")
 
-    state["baseline"] = obj["baseline"]
+    state["baseline"] = clean_baseline
     state["golden_status"] = status
     state["nodes"].append({"id": "n000-golden", "kind": "golden",
                            "status": status, "components": component_status, "ts": now_iso()})
@@ -1347,7 +1345,7 @@ def record_golden_run(state: dict, recipe: str, result: dict) -> bool:
 
 
 def latest_measurement_text(state: dict) -> str:
-    """获取最近一次有效 Measurement 产出的诊断报告正文，用于注入猜想 prompt。"""
+    """获取最近一次有效 Measurement 产出的精简摘要与指引，避免 20KB+ 全文塞爆猜想 prompt。"""
     measures = [n for n in state.get("nodes", []) if n.get("kind") == "measure"]
     if not measures:
         return ""
@@ -1355,8 +1353,33 @@ def latest_measurement_text(state: dict) -> str:
     nid = last.get("id")
     p = node_dir(nid) / "measurement.md"
     if p.is_file() and p.stat().st_size > 0:
-        content = p.read_text(encoding="utf-8", errors="replace").strip()
-        return f"## 最新度量诊断报告（来自 {nid}）\n\n{content}"
+        raw = p.read_text(encoding="utf-8", errors="replace").strip()
+        fm = {}
+        body = raw
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) >= 3:
+                for line in parts[1].splitlines():
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        fm[k.strip()] = v.strip()
+                body = parts[2].strip()
+
+        # 提取核心要点：只取前两节的标题和摘要，忽略冗长 case 和附带脚本
+        lines = []
+        for line in body.splitlines():
+            if line.startswith("## 3. 对下一轮猜想的坐标与靶点建议"):
+                break
+            lines.append(line)
+        summary_body = "\n".join(lines[:25]).strip()
+
+        focus = fm.get("focus_dimension", "未知")
+        targets = fm.get("suggested_targets", "[]")
+        return (f"## 最新度量诊断要点（来自 {nid}）\n"
+                f"- **主要瓶颈维度**: `{focus}`\n"
+                f"- **建议优先干预靶点**: `{targets}`\n"
+                f"- **诊断要点精选**:\n{summary_body}\n\n"
+                f"*(详细统计分面、典型 Case 与诊断脚本见: `{p}`，可按需查阅)*")
     # 若无 md 则退回 json/state 摘要
     if last.get("finding") or last.get("decision"):
         return (f"## 最新度量诊断要点（来自 {nid}）\n"
@@ -1952,10 +1975,12 @@ def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -
         f"fixed_count={pre.get('fixed_count')}\n"
         f"- 采纳: {adopted}")
 
-    # 运行 Step5 Archive Agent 提炼研究卡片并沉淀入库
+    # 运行 Step5 Archive Agent：提炼研究卡片写入本节点契约，并由 Agent 自行 sync 进知识库。
+    # 编排器不再代写 bank —— 知识库的追加完全交给 Step5 Agent（见 step5_archive.md 指令 3）。
+    # 早先编排器会把 archive 正文整段 append 一次，和 Agent 自己提炼的条目重复记录同一轮，已移除。
     try:
         archive_d = node_dir(new_nid(state, "archive"))
-        archive_obj = run_node(
+        run_node(
             "step5_archive.md", archive_d, archive_d / "archive_card.md", "archive", "archive",
             ["## 1. 猜想与机制假说", "## 2. 实验方案概述", "## 3. 实验结果与验证判据"],
             state, extra={
@@ -1964,10 +1989,6 @@ def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -
                 "BANK_PATH": BANK_PATH,
             }, timeout_min=15, text_contract=True, retries=0
         )
-        if archive_obj and archive_obj.get("text"):
-            BANK_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with BANK_PATH.open("a", encoding="utf-8") as bf:
-                bf.write(f"\n\n---\n\n## [{now_iso()}] {nid} 归档卡片\n\n" + archive_obj["text"].strip() + "\n")
     except Exception as exc:
         log(f"WARN Step5 Archive 归档记录异常: {exc!r}")
 

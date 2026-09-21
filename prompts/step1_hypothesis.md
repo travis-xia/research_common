@@ -32,11 +32,12 @@
 {{ACTION_SPACE}}
 ```
   - **必须阅读的前序产物**：
-    - 评测协议事实: `research/protocol.md`（Step0 定稿的评测协议事实：答案抽取与判分、终止符与生成上限）
-    - 当前主干配方与尺子: `research/golden_init.json`（受控变量以它为准）
-    - 历史知识库: `research/experience_bank.md`（路径 `{{BANK_PATH}}`；**初始为空**——首轮该文件不存在属正常，一旦有内容必须优先通读，避免重复已被证伪的路线）
+    - 评测协议核心: `research/protocol.md`（按需查阅答案抽取与判分、终止符等受控事实，避免全篇盲读）
+    - 零样本基线报告: `research/baseline.md`（基线实测表现与失败分桶）
+    - 当前主干配方: `research/golden_recipe.md`（受控变量以它为准）
+    - 历史知识库: `research/experience_bank.md`（路径 `{{BANK_PATH}}`；**初始为空**——若已有多轮沉淀，重点查阅近期条目，严禁重复已被证伪的路线）
 - **[可选] Optional Context**:
-  - 最新度量诊断报告（Step2 触发产生升级的诊断时会随下方注入；没有注入即代表本轮无诊断）：
+  - 最新度量诊断要点（若触发过 Step2 深度诊断，核心结论与靶点建议会显示在下方；详尽数据见引用的文件）：
 
 {{MEASUREMENT_DIAGNOSIS}}
 
@@ -65,7 +66,7 @@
 
 - **Output Requirements (产物契约与输出限制)**:
   - 必须输出产物文件: `{{CONTRACT_PATH}}`
-  - 请以清晰的 Markdown 格式输出，必须包含以下二级标题与 Frontmatter：
+  - 严格按照下方给出的 Markdown 格式输出，严禁擅自增删或篡改大章节标题，严禁在正文中附加额外无关章节，简练传达结论；必须包含以下二级标题与 Frontmatter：
 
 ```markdown
 ---

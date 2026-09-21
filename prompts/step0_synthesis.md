@@ -21,8 +21,8 @@
 
 - **[必读] Mandatory References**:
   - 评测协议事实: `research/protocol.md`
-  - 基线实测表现与瓶颈: `research/baseline_analysis.json`（基线实测表现）+ `research/baseline_official_metrics.json`（官方原始指标）、`research/bottlenecks.md`（失败分桶明细）
-  - 外部数据与范式证据: `research/literature.json` + `research/literature.md`
+  - 基线实测表现与瓶颈: `research/baseline.md`（零样本基线得分、耗时、失败分桶与代表性 Bad Cases）
+  - 外部数据与范式证据: `research/literature.md`
 - **[可选] Optional Context**:
   - 制定训练配方指南: `skills/post_train/recipe_guidelines.md`
   - 解码与停机符指南: `skills/post_train/inference_and_decoding.md`
@@ -48,7 +48,7 @@
 
 - **Output Requirements (产物契约与输出限制)**:
   - 必须输出产物文件: `{{CONTRACT_PATH}}`
-  - 产物分两部分，编排器**只从 Frontmatter 按 key 提取单值**，正文只查二级标题在不在、整段原样交给下游工程师读：
+  - 严格按照下方给出的 Markdown 格式输出，严禁擅自增删或篡改大章节标题，严禁在正文中附加额外无关章节，简练传达结论；产物分两部分，编排器**只从 Frontmatter 按 key 提取单值**，正文只查二级标题在不在、整段原样交给下游工程师读：
     - **Frontmatter (单值元数据)**: 下列 key 全部要填，取值范围与含义见每行注释。
     - **正文 (Markdown 小节)**: 诊断、配方细节、执行工单写在固定二级标题下，可自由展开。
 

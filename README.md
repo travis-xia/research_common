@@ -77,7 +77,7 @@ Step0 Golden Init（预算 18%）
    ├─ 三个独立 CLI specialist 并行：
    │  ├─ Protocol：读 evaluate.py/templates/scorer → research/protocol.md
    │  │     （markdown 提醒清单，固定小节；每条结论给 文件:行号）
-   │  ├─ Baseline：直接跑官方 evaluate.py 全量（--limit -1，与交付同刻度）+ 失败分桶 → baseline_analysis.json
+   │  ├─ Baseline：直接跑官方 evaluate.py 全量（--limit -1，与交付同刻度）+ 失败分桶 → baseline.md
    │  └─ Literature：有独立硬时间预算的 WebSearch → literature.{json,md}
    │       ├─ 同时调研**数据属性**与**训练范式**（只查数据源 = grid search 的数据版）
    │       ├─ 核心候选至少两类证据交叉确认，不允许只 curl 几张 HF dataset card
@@ -359,11 +359,10 @@ codex 0.135 也有 PreToolUse 钩子（二进制里能看到 `Command blocked by
 ```
 research/
   protocol.md            评测协议提醒清单（固定小节的 markdown；后续所有节点读它，不再重复读源码）
-  baseline_analysis.json 官方全量基线与 bad-case 分桶
-  literature.json        Web 调研的结构化证据、数据候选、训练范式候选
+  baseline.md            官方全量基线与 bad-case 分桶（带 frontmatter）
   literature.md          带 query/URL/evidence ledger 的人类可读调研报告
-  golden_init.json       Golden Init 契约产物（含 base_plan / first_targets / golden_recipe / ruler）
-  golden_recipe.json     待执行的完整配方（Golden Run 直接读它；续跑不依赖 golden_init 结构）
+  golden_init.json       Golden Init 编排器内部账本（ruler、baseline、组件状态、降级记录）
+  golden_recipe.md       待执行的完整配方工单（Markdown，Golden Run 直接读它）
   golden_run.json        主干节点结果：配方、官方全量分数、Δ、实际发生、给后续轮次的先验
   state.json             节点树、best 指针、平台期计数、度量账本、序号
   journal.md             人类可读的猜想-实验对日志（跨节点 memory）

@@ -1,6 +1,6 @@
 # HypEx Workflow & Artifact Overview
 
-本文档说明系统各节点的真实分工、产物路径与输入输出契约。供所有 Agent 只读查阅，按需调取已有产物，杜绝重复劳动。
+本文档说明系统各节点的真实分工、产物路径与输入输出契约。供所有 Agent 只读查阅，按需调取已有产物，杜绝重复劳动。每个步骤节点只是多轮迭代中的一个轮次的一个步骤，应该有所意识，不应占据过多时间。
 
 ## 1. 流程简述 (Execution Flow)
 
@@ -18,9 +18,9 @@
 | 阶段 / 节点标识 | 核心功能 | 核心输入（按需读取） | 标准产物契约路径 |
 | :--- | :--- | :--- | :--- |
 | **Step 0-A Protocol** | 提炼官方评测启动命令、输入模板、终止符、抽取正则 | 评测源码与配置文件 | `research/protocol.md` |
-| **Step 0-B Baseline** | 跑 Zero-shot 基准，记录基线分数、失败分桶与 badcase | 官方评测脚本、基座模型 | `research/baseline_analysis.json` |
-| **Step 0-C Literature** | 时间预算内检索高相关外部数据配方与训练方法 | 搜索工具、任务目标 | `research/literature.md` |
-| **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe | 上述 0-A/B/C 三份报告 | `research/golden_init.json`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
+| **Step 0-B Baseline** | 跑 Zero-shot 基准，记录基线分数、失败分桶与 badcase | 官方评测脚本、基座模型 | `research/baseline.md` |
+| **Step 0-C Literature** | 调研候选数据集、训练范式、工程超参先验 | 联网检索、外部论文 | `research/literature.md` |
+| **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe | 上述 0-A/B/C 三份报告 | `research/golden_recipe.md`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
 | **Step 0 Golden Run** | 执行初始化配方，跑通交付管道并全量打分，建立主干模型 | Golden Recipe、基座模型 | `research/golden_run.json`<br>`research/nodes/n000-golden-run/model/` |
 | **Step 1 Hypothesis** | 针对当前瓶颈与指定靶点坐标，提出机理猜想 | 最新评测结果、`experience_bank.md` | `research/nodes/n{seq}-hyp-c{i}/hypothesis.md` |
 | **Step 1 Judge** | 规则初筛 + 两两对决淘汰平庸/重复方案，选出 Winner | 所有候选 `hypothesis.md` | `research/nodes/n{seq}-judge/judge.md` |
