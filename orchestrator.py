@@ -8,8 +8,7 @@
     Step0 Golden Init（三路并行 specialist + 汇总 init agent 做初步决策）
       └─► loop: Step1 猜想×N(并行，坐标互斥/视角互异/步长下发) -> 硬规则前筛 -> Judge 两两对比
                 -> (若全否则触发 Step2 Measurement 升级诊断并回流重新生成猜想)
-                -> [Step3 策略规划(非 small 步长或多变量时触发)]
-                -> Step4 Engineer_2 开工前检查（只读、不占卡）-> Step4 Engineer_1 实验
+                -> Step3 Experiment 端到端实验落地（规划方案+运行前代码自查+占卡训练与评测）
                 -> Step5 记录 -> (退火 / 平台期重新点火)
     finalize: best -> final_model
 
@@ -79,11 +78,6 @@ KEEP_CKPT = int(os.environ.get("RESEARCH_KEEP_CKPT", "2"))
 # 不再层层比例推导，LIT_MIN/BASELINE_FRAC 两个旋钮随之取消）
 GOLDEN_FRAC = float(os.environ.get("RESEARCH_GOLDEN_FRAC", "0.1333"))
 RESERVE_FRAC = float(os.environ.get("RESEARCH_RESERVE_FRAC", "0.08"))
-PLAN_TRIGGER_H = float(os.environ.get("RESEARCH_PLAN_TRIGGER_H", "1.5"))
-# Engineer_2 = 开工前的检查（2026-09-10 用户决策：它原来跑在实验之后、重跑评测做事后
-# 复核，那是评测方的活；现在只是在动手前把工程细节顺一遍，发现问题当场改，结论给 Engineer_1）。
-# 唯一有硬配额的中间节点：它便宜才有意义，超过这个数就该怀疑它又跑去做实验了。
-PREFLIGHT_MIN = int(os.environ.get("RESEARCH_PREFLIGHT_MIN", "35"))
 # 单节点硬性 kill 默认关闭：节点超出自己的墙钟上限不再被 SIGKILL，让它自然跑完/自行收尾。
 # 唯一保留的硬停是全局墙钟（605m timeout + _on_term 收尾保存 final_model）。
 # 需要恢复单节点强杀时设 RESEARCH_NODE_HARD_KILL=1。
@@ -633,22 +627,17 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
             "#!/usr/bin/env python3\n# dry facet script\n", encoding="utf-8")
         return 0
 
-    if label == "plan":
-        fm = {"status": "ok", "est_duration_h": 0.5, "requires_multi_stage": False}
-        body = ("# 详细实验方案与执行规划\n\n## 1. 变量控制与对齐\n- 主变量: dry；锁定其余超参。\n\n"
-                "## 2. 详细执行步骤清单 (Steps)\n```bash\n# 1. 准备\n# 2. 训练\n# 3. 评测\n```\n\n"
-                "## 3. 风险与备选回退方案\n- OOM 时减 batch。\n")
-        (node_d / "plan.md").write_text(_md(fm, body), encoding="utf-8")
-        return 0
-
-    if label == "preflight":
-        fm = {"status": "fix_applied", "passed": True, "fixed_count": 1,
-              "notes_for_engineer1": "dry：已补全 generation_config 双 EOS 与解码四键"}
-        body = ("# 运行前代码与工程审查报告\n\n## 1. 代码实现与方案对齐核查\n- 语法/逻辑: 正常。\n\n"
-                "## 2. 工程先验与配置排查\n- 双 EOS 与四键: 已就地修补。\n\n"
-                "## 3. 就地修复记录 (In-place Fixes)\n- generation_config.json: 补全四键。\n\n"
-                "## 4. 给执行工程师 (Engineer_1) 的运行备忘\n- 代码就绪，可执行。\n")
-        (node_d / "preflight.md").write_text(_md(fm, body), encoding="utf-8")
+    if label == "experiment":
+        fm = {"status": "ok", "score": 0.55, "eval_mode": "official_full",
+              "n": 1319, "elapsed_h": 0.05, "model_path": str(node_d / "model"),
+              "preflight_passed": True}
+        body = ("# 实验落地与综合实测报告\n\n## 1. 实验方案与控制变量\n- dry：单变量控制。\n\n"
+                "## 2. 运行前工程与配置自查 (Preflight)\n- 语法与双 EOS: 正常。\n\n"
+                "## 3. 评测指标与结果分析\n- 官方全量 0.55 (n=1319)。\n\n"
+                "## 4. 意外发现与现象记录 (Surprises)\n- dry。\n")
+        (node_d / "model").mkdir(exist_ok=True)
+        write_json(node_d / "model" / "config.json", {"architectures": ["Qwen3ForCausalLM"]})
+        (node_d / "experiment.md").write_text(_md(fm, body), encoding="utf-8")
         return 0
     if label.startswith("hypo"):
         idx = int(label.split("-")[-1])
@@ -696,11 +685,11 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
                 "## 3. 实验结果与验证判据\n- dry：得分 0.63（Δ+0.08），采纳。\n")
         (node_d / "archive_card.md").write_text(_md(fm, body), encoding="utf-8")
         return 0
-    if label in ("experiment", "golden_run"):
+    if label == "golden_run":
         (node_d / "model").mkdir(exist_ok=True)
         write_json(node_d / "model" / "config.json", {"architectures": ["Qwen3ForCausalLM"]})
         model_path = str(node_d / "model")
-        if label == "golden_run" and os.environ.get("RESEARCH_DRY_GOLDEN_FAIL") == "1":
+        if os.environ.get("RESEARCH_DRY_GOLDEN_FAIL") == "1":
             shutil.rmtree(node_d / "model", ignore_errors=True)
             fm = {"status": "failed", "score": None, "eval_mode": "official_full",
                   "n": 0, "elapsed_h": 0.02, "model_path": None}
@@ -710,16 +699,7 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
                     "## 4. 防污染与合规自查\n- 未执行。\n")
             (node_d / "result.md").write_text(_md(fm, body), encoding="utf-8")
             return 0
-        if label == "golden_run":
-            acc, n = 0.55, 1319
-        else:
-            st = read_json(RES / "state.json") or {}
-            n_exp = len([x for x in st.get("nodes", []) if x.get("kind") == "exp"])
-            best = st.get("best") or {}
-            anchor = best.get("score") if isinstance(best.get("score"), (int, float)) else None
-            if anchor is None:
-                anchor = score_of((st.get("baseline") or {}).get("official")) or 0.30
-            acc, n = round(anchor + (0.08 if n_exp < 2 else 0.0), 4), 1319
+        acc, n = 0.55, 1319
         fm = {"status": "ok", "score": acc, "eval_mode": "official_full", "n": n,
               "elapsed_h": 0.02, "model_path": model_path}
         body = ("# 实验执行与实测打分报告\n\n## 1. 实验落地概况\n- dry：训练收敛。\n\n"
@@ -1754,96 +1734,29 @@ def hypo_inject(hypo) -> str:
     return inject_json({k: v for k, v in (hypo or {}).items() if not k.startswith("_")})
 
 
-def step3_plan(state: dict, hypo: dict, sched: dict, reason: str, budget_min: int) -> dict:
+def step3_experiment(state: dict, hypo: dict, sched: dict, budget_min: int):
+    """Step3 端到端实验落地：规划方案 -> 运行前工程与配置自查 (Preflight) -> 占卡训练与统一评测。
+    三合一单卡串行执行，遵循边做边写的渐进式落盘纪律。
+    产物是 Markdown+frontmatter（experiment.md），折成下游 result 形状后返回。"""
     d = Path(hypo["_dir"])
     plan_meta = hypo.get("_plan") or {}
     spec = size_spec(plan_meta.get("size", ""))
-    log(f"---- Step3 策略规划（{reason}）")
-    obj = run_node("step3_plan.md", d, d / "plan.md", "plan", "plan",
-                   ["## 1. 变量控制与对齐", "## 2. 详细执行步骤清单 (Steps)"], state,
-                   extra={"PLAN_REASON": reason, "PLAN_TRIGGER_H": PLAN_TRIGGER_H,
-                          "COST_CAP_H": sched["cost_cap_h"],
+    log(f"---- Step3 端到端实验落地 {hypo['_nid']}（预算 {budget_min} 分钟）")
+    obj = run_node("step3_experiment.md", d, d / "experiment.md", "experiment", "experiment",
+                   ["## 1. 实验方案与控制变量", "## 2. 运行前工程与配置自查 (Preflight)", "## 3. 评测指标与结果分析"], state,
+                   extra={"HYPOTHESIS_FILE": str(d / "hypothesis.md"),
+                          "HYPOTHESIS": hypo_inject(hypo),
+                          "COST_CAP_H": round(budget_min / 60.0, 2),
                           "STEP_SIZE": plan_meta.get("size"),
                           "MAX_VARS": spec.get("max_vars", 1),
                           "INIT_FROM": spec.get("init_from", "best_only"),
-                          "HYPOTHESIS_FILE": str(d / "hypothesis.md"),
-                          "HYPOTHESIS": hypo_inject(hypo)},
-                   timeout_min=budget_min, retries=0, text_contract=True)
-    return obj or {}
-
-
-def plan_text(plan: dict) -> str:
-    """把 Step3 规划正文注入给 Engineer。small 步长没有独立规划节点时给一句兜底说明。"""
-    body = (plan or {}).get("body") or (plan or {}).get("text")
-    if body:
-        return str(body)
-    return ("（本轮是 small 步长的单变量实验，没有独立规划节点："
-            "自行拟定最小步骤，但仍需在 result.md 正文里说明实际做法）")
-
-
-def step4_engineer1(state: dict, hypo: dict, plan: dict, sched: dict, budget_min: int,
-                    preflight: dict | None = None):
-    """Engineer_1：实验阶段，唯一承担训练/评测的节点。单卡串行执行。
-    产物是 Markdown+frontmatter（result.md），折成下游 result 形状后返回。"""
-    d = Path(hypo["_dir"])
-    plan_meta = hypo.get("_plan") or {}
-    log(f"---- Step4 Engineer_1 实验 {hypo['_nid']}（预算 {budget_min} 分钟）")
-    obj = run_node("step4_engineer1_run.md", d, d / "result.md", "experiment", "experiment",
-                   ["## 1. 实验落地概况", "## 2. 评测指标与结果"], state,
-                   extra={"HYPOTHESIS": hypo_inject(hypo),
-                          "PLAN": plan_text(plan),
-                          "PREFLIGHT": preflight_text(preflight),
-                          "COST_CAP_H": round(budget_min / 60.0, 2),
-                          "STEP_SIZE": plan_meta.get("size"),
-                          "INIT_FROM": size_spec(plan_meta.get("size", "")).get("init_from"),
                           "BEST_MODEL_PATH": state["best"].get("model")},
                    timeout_min=budget_min, with_agents=True, retries=0, text_contract=True)
-    return result_from_md(obj) if obj else None
-
-
-def step4_engineer2_preflight(state: dict, hypo: dict, plan: dict, budget_min: int) -> dict:
-    """Engineer_2：在代码实现后、真正启动实验运行前进行代码与配置审查，单纯排除工程 bug。
-
-    它不评价猜想合理性（不改科学语义）、不做事后复核，单纯检验刚写好的代码与配置（排除语法 bug、
-    超参笔误、prompt 格式与终止符错配），发现问题就地修复，保证实验不受低级工程问题干扰。
-    （仅用于循环里的消融实验；Golden Run 主干节点自跑到底、不走这个开工前检查。）
-    """
-    d = Path(hypo["_dir"])
-    plan_meta = hypo.get("_plan") or {}
-    log(f"---- Step4 Engineer_2 运行前代码与工程审查（上限 {budget_min} 分钟，不占卡）")
-    obj = run_node("step4_engineer2_preflight.md", d, d / "preflight.md", "preflight",
-                   "preflight", ["## 1. 代码实现与方案对齐核查", "## 2. 工程先验与配置排查"], state,
-                   extra={"HYPOTHESIS": hypo_inject(hypo),
-                          "PLAN": plan_text(plan),
-                          "STEP_SIZE": plan_meta.get("size"),
-                          "INIT_FROM": size_spec(plan_meta.get("size", "")).get("init_from"),
-                          "BEST_MODEL_PATH": state["best"].get("model")},
-                   timeout_min=budget_min, deny_tools=["WebSearch", "WebFetch"],
-                   retries=0, text_contract=True)
-    obj = obj or {}
-    if obj:
-        # 折成下游沿用的形状：passed(bool)/fixed_count(int)/notes_for_engineer1(str)
-        obj["passed"] = fm_bool(obj, "passed", True)
-        obj["fixed_count"] = fm_int(obj, "fixed_count", 0)
-        obj["notes_for_engineer1"] = str(obj.get("notes_for_engineer1") or "").strip()
-        log(f"     passed={obj.get('passed')}｜已修复工程问题 {obj.get('fixed_count')} 处"
-            f"｜备忘 {len(obj.get('notes_for_engineer1'))} 字")
-    return obj
-
-
-def preflight_text(pre: dict | None) -> str:
-    """把 preflight 产物渲染成注入 Engineer_1 的段落：重点是 notes_for_engineer1
-    （要用的具体数值/路径）与就地修复项数，附审查正文供细看。"""
-    if not pre:
-        return "（开工前检查没有产出，本节点自己按 research/protocol.md 顺一遍工程细节）"
-    notes = str(pre.get("notes_for_engineer1") or "").strip()
-    fixed_count = pre.get("fixed_count")
-    body = str(pre.get("body") or "").strip()
-    if not (notes or body or fixed_count):
-        return "（开工前检查没查出要改的东西）"
-    head = (f"开工前检查：passed={pre.get('passed')}，就地修复 {fixed_count} 处。\n"
-            f"给你的运行备忘（notes_for_engineer1）：{notes or '（无）'}\n")
-    return head + (f"\n完整审查与就地修复记录：\n{body}" if body else "")
+    if not obj:
+        return None
+    res = result_from_md(obj)
+    res["preflight_passed"] = fm_bool(obj, "preflight_passed", True)
+    return res
 
 
 def score_of(metrics: dict | None) -> float | None:
@@ -1920,7 +1833,7 @@ def same_scale_anchor(state: dict, metrics: dict | None) -> tuple[float | None, 
         "baseline.official（刻度不完全一致）"
 
 
-def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -> None:
+def step5_record(state: dict, hypo: dict, result: dict) -> None:
     """记录猜想-实验对，更新 best，做 checkpoint GC。"""
     nid = hypo["_nid"]
     plan_meta = hypo.get("_plan") or {}
@@ -1929,6 +1842,7 @@ def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -
     base, base_from = same_scale_anchor(state, metrics)
     delta = None if (score is None or base is None) else round(score - base, 4)
     thr = adopt_threshold(metrics)
+    preflight_passed = result.get("preflight_passed", True)
 
     adopted = bool(score is not None and delta is not None
                    and delta >= IMPROVE_EPS and delta > thr and result.get("status") == "ok"
@@ -1956,7 +1870,7 @@ def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -
         "eval_mode": (metrics or {}).get("eval_mode"), "eval_n": eval_n_of(metrics),
         "adopted": adopted,
         "verdict": result.get("hypothesis_verdict"), "status": result.get("status"),
-        "preflight_passed": pre.get("passed"),
+        "preflight_passed": preflight_passed,
         "cost_estimate_h": hypo.get("cost_estimate_h"), "wall_min": result.get("wall_min"),
     })
     save_state(state)
@@ -1967,12 +1881,10 @@ def step5_record(state: dict, hypo: dict, plan: dict, result: dict, pre: dict) -
         f"- 猜想: {hypo.get('title')}\n"
         f"- 靶点: {tgt_str}（预估 {hypo.get('cost_estimate_h')}h）\n"
         f"- 假说要点:\n{hypo_head}\n"
-        f"- 规划: {'见 plan.md' if plan else '常规单变量（无规划节点）'}\n"
         f"- 结果: {score}（Δ{delta}，采纳阈值 {thr}，比较对象 {base_from}={base}，"
         f"{(metrics or {}).get('eval_mode')} n={eval_n_of(metrics)}）status={result.get('status')}\n"
         f"- 实际发生: {result.get('what_actually_happened')}\n"
-        f"- Engineer_2 开工前检查: passed={pre.get('passed')} "
-        f"fixed_count={pre.get('fixed_count')}\n"
+        f"- Preflight 自查通过: {preflight_passed}\n"
         f"- 采纳: {adopted}")
 
     # 运行 Step5 Archive Agent：提炼研究卡片写入本节点契约，并由 Agent 自行 sync 进知识库。
@@ -2373,38 +2285,17 @@ def main() -> int:
         state["consec_rejects"] = 0
         save_state(state)
 
-        chosen_size = (chosen.get("_plan") or {}).get("size", "medium")
-
-        # Step3 只在需要真正做算力/显存/多变量规划时触发：small 步长的单变量实验不需要
-        # Step3 只在需要真正做算力/显存/多阶段规划时触发：small 步长的单变量实验不需要
-        need_plan = (chosen_size != "small"
-                     or float(chosen.get("cost_estimate_h") or 0) > PLAN_TRIGGER_H)
-        plan = {}
-        if need_plan:
-            plan_reason = (f"步长 {chosen_size}"
-                           + (f"／成本估计 {chosen.get('cost_estimate_h')}h > {PLAN_TRIGGER_H}h"
-                              if float(chosen.get("cost_estimate_h") or 0) > PLAN_TRIGGER_H
-                              else ""))
-            plan = step3_plan(state, chosen, sched, plan_reason, wall_min())
-
-        # Step4: 实验落地与双工工程保障
-        # Engineer_1 先行准备代码与配置；在正式启动占卡实验前，由 Engineer_2 进行代码与工程核验（就地修 bug/对齐超参/补全终止符）
-        pre = step4_engineer2_preflight(state, chosen, plan,
-                                        min(PREFLIGHT_MIN, wall_min()))
-
+        # Step3: 端到端实验落地（方案规划 + 运行前代码与配置自查 + 占卡训练与统一评测）
         est_h = float(chosen.get("cost_estimate_h") or 1.0)
-        # Engineer_1 的超时 = 候选自报估时，再被活墙钟夹住（收尾保留外的全部剩余时间）。
-        # 估时本身是节点自己的决定——prompt 已要求含 ≥20% 余量；prefilter 已挡下装不下的候选。
-        # 放在 plan / preflight 之后算：那两步花掉的墙钟要如实扣掉。
         cost_h = min(est_h, chosen["_budget_cap_h"],
                      max(0.4, remaining_h() - reserve_h - 0.3))
 
-        result = step4_engineer1(state, chosen, plan, sched, int(cost_h * 60), pre)
+        result = step3_experiment(state, chosen, sched, int(cost_h * 60))
         if result is None:
             result = {"status": "failed", "metrics_dev": None,
-                      "what_actually_happened": "Engineer_1 未产出合法 result.md"
+                      "what_actually_happened": "Step3 Experiment 未产出合法 experiment.md"
                                                 "（见 experiment.stream.jsonl）"}
-        step5_record(state, chosen, plan, result, pre)
+        step5_record(state, chosen, result)
         state = load_state()
 
     finalize(state)
