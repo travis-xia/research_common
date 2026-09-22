@@ -13,7 +13,7 @@
 - 目标基座模型: `{{MODEL}}`；目标评测基准: `{{BENCHMARK}}`
 - 最大可用时长: **{{NODE_TIMEOUT_MIN}} 分钟**
 - **时间管理铁律**：请严格按照 `{{WORKFLOW_OVERVIEW_PATH}}` 的全局流程安排自己的时间。这是整个流水线最核心的冷启动主干运行，务必严格掌控训练与全量评测的时间节点，顺利完成交付，为后续多轮循环打下稳定基石。
-- 机器环境与显卡: `nvidia-smi` 显存占用为系统占卡守护进程（启动任务自动退出），只要 Processes 表无任务即可直接用卡。遇到显卡、网络下载（>50MB 需防断流）、磁盘空间等环境问题，详见 `skills/engineering/env_and_hardware.md`。
+- **机器环境与显卡**: `nvidia-smi` 显存占用为系统占卡守护进程（启动任务自动退出），只要 Processes 表无任务即可直接用卡。遇到显卡、网络下载（>50MB 需防断流）、磁盘空间等环境问题，详见 `skills/engineering/env_and_hardware.md`。
 
 ---
 

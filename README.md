@@ -73,7 +73,7 @@ WORK/OUT_DIR/TRACE_ROOT 由 `run_on_host.sh` 统一派生到
 ## 3. 流程实现
 
 ```
-Step0 Golden Init（预算 18%）
+Step0 Golden Init（预算 10%，从 golden 信封 35% 里出）
    ├─ 三个独立 CLI specialist 并行：
    │  ├─ Protocol：读 evaluate.py/templates/scorer → research/protocol.md
    │  │     （markdown 提醒清单，固定小节；每条结论给 文件:行号）
@@ -87,7 +87,7 @@ Step0 Golden Init（预算 18%）
       → base_plan + first_targets（首轮该打哪些坐标，要覆盖不同机制）
       → golden_recipe（可直接执行的完整训练配方，见 3.1）
    ↓
-Golden Run（预算上限 35%，n000-golden-run）
+Golden Run（golden 信封 35% 的剩余，n000-golden-run）
    └─ 不进循环，先照 golden_recipe 跑一次完整训练 + **官方全量评测**建立主干
       ├─ 复用 Engineer_2（开工前检查）→ Engineer_1 → 记录；不走 Step2（无猜想）也不走 Step3
       │  （规划字段已合并进 recipe，由 synthesis 一次写出）
@@ -131,7 +131,7 @@ filters、answer_format、target_n）/ `hyperparams` / `generation_config` / `ch
 **为什么不复用 Step3**：Step3 的产物字段（steps、budget、success/abort 判据）直接合并进
 recipe，由 synthesis 一次写出——它手里有三个 specialist 的全部产物，比只看一个猜想的
 Step3 信息更全。代价是 synthesis 不持卡，`est_min` 只能是先验估算，所以 Golden Run 的
-超时不夹到这个估值上，而是给 `min(总预算 × 35%, 剩余 − 收尾保留 − 0.3h)`。
+超时不夹到这个估值上，而是给 `min(信封剩余（总预算×35% − Init 已耗）, 剩余 − 收尾保留 − 0.3h)`。
 
 硬校验会挡下的情况（每条都对应一个跨任务先验）：缺字段、`epochs > 3`（3 epoch 过拟合在
 4 个 benchmark 上有记录）、`generation_config` 的四个采样键不全（推理引擎不读 `do_sample`，
@@ -411,15 +411,18 @@ research/
 ## 6. 预算、资源与兜底
 
 - 全局预算读 harness 的 `timer.sh`，时间纪律**只管两头**（2026-09-07 用户决策）：
-  Golden Init 13.33%（10h 下 80 分钟）、Golden Run 上限 35%（主干要跑足）、收尾保留 8%
+  golden 阶段（Init+Run）合计 35%（2026-09-22 用户纠偏：Init 从信封里出，不叠加）——
+  Init 10%（10h 下 60 分钟，2026-09-22 用户决策从 13.33% 降档）、Run 拿信封剩余
+  （10h 下 ≈150 分钟，主干要跑足）、收尾保留 8%
   （final_model 交付顺利）；**中间步骤没有
   按步长/按比例的硬配额**——每个节点的 CLI 超时=当前活墙钟（剩余−收尾保留），
   Bash 单命令超时（`BASH_MAX_TIMEOUT_MS`）同墙钟，240 分钟的硬上限已删。挂死的兜底
   是 harness 的 `NUM_HOURS` 定时器 + SIGTERM→`finalize`，final_model 不会丢
 - Golden Init 三路并行；内部窗口**直接按 10h 总预算定值**（2026-09-09 用户决策，
   不再 20%/50%/2/3 层层比例推导，`RESEARCH_LIT_MIN`/`RESEARCH_BASELINE_FRAC`
-  两个旋钮取消）：protocol / baseline / literature 各 36 分钟硬窗口（并行段墙钟 36），
-  synthesis 拿 deadline 剩余、保底 80-36=44 分钟；总预算偏离 10h 时按 36/80 同比缩放。
+  两个旋钮取消）：protocol / baseline / literature 各拿 Init 窗口的 45% 硬窗口
+  （10h/60 分钟下各 27 分钟，并行段墙钟 27），synthesis 拿 deadline 剩余、保底 33 分钟；
+  总预算偏离 10h 时按 45/55 同比缩放。
   literature 仍把「提问/广搜/深查/综合」按 15%/35%/30%/20% 分配。编排器对整段
   Web 调研而非单次 CLI attempt 计时，重试也不能突破这段预算
 - 单卡串行：实验按节点独占一张卡；非实验阶段不强制摘卡（2026-09-11 用户决策），
@@ -466,7 +469,7 @@ research/
 防止噪声淹没信号）｜`RESEARCH_OFFICIAL_CHECK_LIMIT=150`（仅 Golden Init baseline 的退路）
 
 预算与资源：
-`RESEARCH_GOLDEN_FRAC=0.1333`（10h 下 Golden Init 80 分钟）｜`RESEARCH_GOLDEN_RUN_FRAC=0.35`｜`RESEARCH_GOLDEN_RUN=1`
+`RESEARCH_GOLDEN_FRAC=0.10`（10h 下 Golden Init 60 分钟）｜`RESEARCH_GOLDEN_RUN_FRAC=0.35`（Init+Run 合计的信封，Run 拿剩余）｜`RESEARCH_GOLDEN_RUN=1`
 （设 0 可关掉 Golden Run，退回「第一次训练由循环决定」的旧行为，便于做消融）｜
 `RESEARCH_RESERVE_FRAC=0.08`｜
 `RESEARCH_PLAN_TRIGGER_H=1.5`｜`RESEARCH_PREFLIGHT_MIN=35`（Engineer_2 开工前检查的硬上限，

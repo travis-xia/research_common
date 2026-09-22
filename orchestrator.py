@@ -73,10 +73,12 @@ PLATEAU_K = int(os.environ.get("RESEARCH_PLATEAU_K", "2"))
 # 全量评测定死为IMPROVE_EPS；子集评测挂到噪声上max(IMPROVE_EPS, se(n))，见adopt_threshold()。
 IMPROVE_EPS = float(os.environ.get("RESEARCH_IMPROVE_EPS", "0.01"))
 KEEP_CKPT = int(os.environ.get("RESEARCH_KEEP_CKPT", "2"))
-# Golden Init 占总预算比例（2026-09-09 用户决策：10h 下 = 80 分钟总窗口，即三路
-# specialist 并行各 36 + synthesis 保底 44；内部窗口在 step0_golden_init 直接定值，
-# 不再层层比例推导，LIT_MIN/BASELINE_FRAC 两个旋钮随之取消）
-GOLDEN_FRAC = float(os.environ.get("RESEARCH_GOLDEN_FRAC", "0.1333"))
+# Golden Init 占总预算比例（2026-09-22 用户决策：从 13.33% 降到 10%，10h 下 = 60 分钟
+# 总窗口，specialist 并行按 45% 切、synthesis 保底 55%；内部窗口在 step0_golden_init
+# 直接定值，不再层层比例推导，LIT_MIN/BASELINE_FRAC 两个旋钮随之取消）。这段预算从
+# 下面的 GOLDEN_RUN_FRAC 信封里出（2026-09-22 用户纠偏：35% 是 Init 调研 + Run 合计），
+# 不是在 35% 之外再叠加。
+GOLDEN_FRAC = float(os.environ.get("RESEARCH_GOLDEN_FRAC", "0.10"))
 RESERVE_FRAC = float(os.environ.get("RESEARCH_RESERVE_FRAC", "0.08"))
 # 单节点硬性 kill 默认关闭：节点超出自己的墙钟上限不再被 SIGKILL，让它自然跑完/自行收尾。
 # 唯一保留的硬停是全局墙钟（605m timeout + _on_term 收尾保存 final_model）。
@@ -110,6 +112,9 @@ OFFICIAL_CHECK_LIMIT = int(os.environ.get("RESEARCH_OFFICIAL_CHECK_LIMIT", "150"
 # 失败不重试：如实记进 research/golden_run.json，注入后续所有节点当先验，然后照旧
 # 落回 bootstrap regime 走大步（安全网）。
 GOLDEN_RUN = os.environ.get("RESEARCH_GOLDEN_RUN", "1") == "1"
+# 35% 是整个 golden 阶段（Init 的调研 + Run）合计的信封，不是 Run 单独的上限
+# （2026-09-22 用户纠偏）：Init 已耗掉的时间从信封里扣，Run 只拿剩余——
+# 10h 下信封 210 分钟，Init 60 分钟，Run ≈ 150 分钟。
 GOLDEN_RUN_FRAC = float(os.environ.get("RESEARCH_GOLDEN_RUN_FRAC", "0.35"))
 # Golden Init 的失败分桶是粗桶（推理错/格式错/截断/抽取失败/复读），不足以支撑
 # "并行候选各守一个坐标"。默认在第一轮猜想之前先做一次 Measurement 把分面铺开。
@@ -1036,10 +1041,12 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
     """
     total_min = max(1, budget_min)
     golden_deadline = time.monotonic() + total_min * 60
-    # 窗口直接按 10h 总预算定值（2026-09-09 用户决策：不再 20%/50%/2/3 层层比例推导）：
-    # 三路 specialist 并行、各 36 分钟硬窗口（并行段墙钟 36），synthesis 拿 deadline
-    # 剩余、保底 80-36=44 分钟。总预算偏离 10h 时各窗口随总窗口按 36/80 同比缩放。
-    # 36 分钟对三路都够：baseline 官方全量实测 ~12-15 分钟 + 逐样本分析（live 曾
+    # 窗口随 Init 总窗口定值（2026-09-09 用户决策：不再 20%/50%/2/3 层层比例推导；
+    # 2026-09-22 用户决策：Init 降到总预算 10%，10h 下总窗口 60 分钟）：
+    # 三路 specialist 并行、各拿总窗口的 45%（公式里的 36/80 沿用原 80 分钟窗口的
+    # 36/44 切分），10h 下各 27 分钟（并行段墙钟 27），synthesis 拿 deadline 剩余、
+    # 保底 60-27=33 分钟。总预算偏离 10h 时按 45/55 同比缩放。
+    # 27 分钟对三路仍够：baseline 官方全量实测 ~12-15 分钟 + 逐样本分析（live 曾
     # 12-20 分钟完成评测段），protocol/literature 历史上从未用满 30 分钟。
     specialist_min = max(1, round(total_min * 36 / 80))
     protocol_min = baseline_min = literature_min = specialist_min
@@ -2126,7 +2133,10 @@ def main() -> int:
     # 单机制修改 -> 回滚/晋级"。成功后 recipe_stable() 成立，第一轮直接是 climb_wide；
     # 失败则 best 仍为空，第一轮照旧 bootstrap 走大步（bootstrap 从此是兜底路径）。
     if GOLDEN_RUN and not (RES / "golden_run.json").is_file():
-        cap_h = min(total_h * GOLDEN_RUN_FRAC,
+        # 35% 信封含 Init：从编排器启动到现在的耗时（bootstrap + Init 全程）从信封里扣，
+        # Init+Run 合计不超过 GOLDEN_RUN_FRAC；第二项照旧防透支（剩余−收尾保留−安全垫）。
+        golden_spent_h = max(0.0, total_h - remaining_h())
+        cap_h = min(max(0.0, total_h * GOLDEN_RUN_FRAC - golden_spent_h),
                     max(0.0, remaining_h() - reserve_h - 0.3))
         if cap_h >= 0.5:
             step0_golden_run(state, int(cap_h * 60))
