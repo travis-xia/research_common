@@ -20,13 +20,13 @@ m.log(f"regime={sched['mode']} sizes={sched['sizes']} layers={sched['layers']} "
 
 plans = m.assign_plans(st, sched)
 for p in plans:
-    print(f"    cand-{p['idx']}: size={p['size']} max_modules={p['max_modules']} layers={p['layers']}")
+    print(f"    cand-{p['idx']}: size={p['size']} layers={p['layers']}")
 
 cands = m.step1_hypotheses(st, sched, plans, 14)
 m.log(f"产出候选 {len(cands)}")
 for c in cands:
     tgt = c.get("_target_key") or c.get("target")
-    print("   ", c["_id"], "|", c.get("step_size"), "|", c.get("layer"), "|",
+    print("   ", c["_id"], "|", c.get("layer"), "|",
           tgt, "|", str(c.get("title"))[:60], "| cost", c.get("cost_estimate_h"),
           "| min_viable", c.get("min_viable_h"))
 

@@ -9,7 +9,7 @@
       └─► loop: Step1 猜想×N(并行，坐标互斥/视角互异/步长下发) -> 硬规则前筛 -> Judge 两两对比
                 -> (若全否则触发 Step2 Measurement 升级诊断并回流重新生成猜想)
                 -> Step3 Experiment 端到端实验落地（规划方案+运行前代码自查+占卡训练与评测）
-                -> Step5 记录 -> (退火 / 平台期重新点火)
+                -> Step5 记录 -> (平台期重新点火 / 常态探索 / 收尾保护)
     finalize: best -> final_model
 
 每个节点是一个独立的 CLI 进程（`codex exec` 或 `claude -p`，由 RESEARCH_CLI 选定），
@@ -301,7 +301,7 @@ def journal_for_prompt(state: dict) -> str:
     lines = [f"（完整日志见 `research/journal.md`；这里是最近 {len(recs)} 个实验节点）"]
     for n in recs:
         lines.append(
-            f"- `{n['id']}` [{n.get('layer', '?')}/{n.get('step_size', '?')}] "
+            f"- `{n['id']}` [{n.get('layer', '?')}/{n.get('regime', '?')}] "
             f"{n.get('target', '?')}｜{n.get('title', '')}｜"
             f"score {n.get('score')}（Δ{n.get('delta')}，采纳阈值 {n.get('adopt_threshold')}，"
             f"{n.get('eval_mode', '?')} n={n.get('eval_n')}）｜"
@@ -641,7 +641,6 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
         return 0
     if label.startswith("hypo"):
         idx = int(label.split("-")[-1])
-        size = extra.get("STEP_SIZE", "small")
         allowed = str(extra.get("ALLOWED_LAYERS", "exec/strategy"))
         exec_t = [{"domain": "Inference", "module": "Decoding"},
                   {"domain": "Inference", "module": "Hyperparams"},
@@ -657,7 +656,7 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
         else:
             pool = exec_t + strat_t
         target = pool[idx % len(pool)]
-        fm = {"status": "ok", "targets": [target], "step_size": size,
+        fm = {"status": "ok", "targets": [target],
               "abstain": False, "cost_estimate_h": round(0.2 + 0.1 * idx, 2)}
         body = ("# 科学假说与干预设计\n\n## 1. 现象观察与支撑证据\n"
                 "- dry：最新评测里 32/100 条判为 format_error。\n\n"
@@ -1295,7 +1294,7 @@ def record_golden_run(state: dict, recipe: str, result: dict) -> bool:
     state["nodes"].append({
         "id": nid, "kind": "golden_run", "ts": now_iso(),
         "title": "Golden Run：执行 Golden Init 配方建立主干",
-        "layer": "strategy", "target": "multi", "step_size": "golden",
+        "layer": "strategy", "target": "multi", "regime": "golden_init",
         "score": score, "delta": delta, "adopt_threshold": 0.0,
         "eval_mode": (metrics or {}).get("eval_mode"), "eval_n": eval_n_of(metrics),
         "adopted": adopted, "status": result.get("status"),
@@ -1426,12 +1425,8 @@ STEP_POLICY = None
 def step_policy() -> dict:
     global STEP_POLICY
     if STEP_POLICY is None:
-        STEP_POLICY = read_json(RES / "step_policy.json") or {"sizes": {}, "regimes": {}}
+        STEP_POLICY = read_json(RES / "step_policy.json") or {"regimes": {}}
     return STEP_POLICY
-
-
-def size_spec(size: str) -> dict:
-    return (step_policy().get("sizes") or {}).get(size, {})
 
 
 def action_space() -> dict:
@@ -1458,26 +1453,18 @@ def coord_layer(dom: dict, mod: dict) -> str:
     return str(mod.get("layer") or dom.get("layer") or "exec")
 
 
-def allowed_layers(sched: dict, size: str) -> list[str]:
-    """本候选可用层级 = 本轮 regime 允许的层级 ∩ 该步长允许的层级。"""
-    regime = list(sched.get("layers") or ["exec", "strategy"])
-    by_size = list(size_spec(size).get("layers") or regime)
-    inter = [l for l in regime if l in by_size]
-    return inter or regime
+def allowed_layers(sched: dict) -> list[str]:
+    """本轮允许的层级，由 regime 决定（polish 为 exec，explore/reignite 为 strategy+exec）。"""
+    return list(sched.get("layers") or ["strategy", "exec"])
 
 
 def assign_plans(state: dict, sched: dict) -> list[dict]:
-    """给每个并行候选分配【退火步长 + 允许层级】。
-
-    靶点坐标不再由编排器硬性指定，而是由模型根据现象与机制操作空间自主分析选取。
-    退火控制体现在下发的步长规格（large/medium/small）以及对应的 max_modules（最大允许干预模块数）。
-    """
+    """给每个并行候选分配槽位。常态下全开 strategy/exec，不控制步伐大小。"""
     plans: list[dict] = []
-    for i, size in enumerate(sched["sizes"]):
-        allowed = allowed_layers(sched, size)
-        spec = size_spec(size)
-        plans.append({"idx": i, "size": size, "layers": allowed,
-                      "max_modules": spec.get("max_modules", 1)})
+    layers = allowed_layers(sched)
+    n_cand = int(sched.get("n_cand") or N_HYPO)
+    for i in range(n_cand):
+        plans.append({"idx": i, "layers": layers})
     return plans
 
 
@@ -1486,7 +1473,7 @@ def step1_hypotheses(state: dict, sched: dict, plans: list[dict],
     """N 个猜想节点并行。纯 API 阶段，不占卡；守卫会拦下任何占卡命令。"""
     log(f"---- Step1 并行猜想 ×{len(plans)}（mode={sched['mode']}）")
     for p in plans:
-        log(f"     cand-{p['idx']}: size={p['size']} max_modules={p['max_modules']} layers={p['layers']}")
+        log(f"     cand-{p['idx']}: layers={p['layers']}")
     for p in plans:
         p["nid"] = new_nid(state, "hyp") + f"-c{p['idx']}"
         p["dir"] = node_dir(p["nid"])
@@ -1494,18 +1481,11 @@ def step1_hypotheses(state: dict, sched: dict, plans: list[dict],
     act_space_json = inject_json(action_space())
 
     def one(p: dict):
-        spec = size_spec(p["size"])
         best = state.get("best") or {}
         extra = {
             "CAND_INDEX": p["idx"] + 1, "N_CAND": len(plans), "N_OTHER": len(plans) - 1,
             "MODE": sched["mode"], "MODE_HINT": sched["hint"],
-            "STEP_SIZE": p["size"],
             "BEST_MODEL_PATH": best.get("model") or MODEL,
-            "STEP_SIZE_SPEC": inject_json(spec),
-            "MAX_VARS": spec.get("max_vars", 1),
-            "MAX_MODULES": p["max_modules"],
-            "INIT_FROM": spec.get("init_from", "best_only"),
-            "MUST_DISCRIMINATE": "是" if spec.get("must_discriminate") else "否",
             "ACTION_SPACE": act_space_json,
             "ALLOWED_LAYERS": "/".join(p["layers"]),
             "COST_CAP_H": sched["cost_cap_h"],
@@ -1578,9 +1558,10 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
                           budget_cap_h: float) -> tuple[list[dict], list[dict]]:
     """硬规则先筛（流程记录.md 猜想 judge 第①条）。
 
-    这一层**不调 LLM**：非法坐标、越权层级、超出退火最大模块数、缺 targets、
-    违反步长契约、墙钟装不下，都在这里判废。判重（与已归档尤其已证伪的猜想实质重复）
-    交给 Judge——它读 experience_bank。留给 LLM 的是②：两两对比选机理潜力。
+    这一层**不调 LLM**：非法坐标、越权层级、缺 targets、
+    违反步长契约、墙钟装不下，都在这里判废（已废除死板的退火模块数量限制）。
+    判重（与已归档尤其已证伪的猜想实质重复）交给 Judge——它读 experience_bank。
+    留给 LLM 的是②：两两对比选机理潜力。
     """
     survivors, rejected = [], []
 
@@ -1605,12 +1586,6 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
             raw_targets = [c.get("target")] if isinstance(c.get("target"), dict) else []
         if not isinstance(raw_targets, list) or not raw_targets:
             drop(c, "未在 frontmatter 中指定有效的 targets 靶点列表")
-            continue
-
-        # 退火校验：靶点模块数量不得超出本轮步长上限
-        max_mod = int(plan.get("max_modules") or spec.get("max_modules", 1))
-        if len(raw_targets) > max_mod:
-            drop(c, f"选取的靶点模块数 {len(raw_targets)} 超出本轮退火步长 {plan.get('size')} 允许上限 {max_mod}")
             continue
 
         # 校验每个靶点的合法性与层级
@@ -1657,12 +1632,7 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
         c["layer"] = "strategy" if "strategy" in layers_of else "exec"
         c["title"] = hypo_title_from_body(c.get("body") or "", target_combo_key)
 
-        # —— 步长契约：步长档位由编排器下发，候选不得擅自更改
-        if c.get("step_size") != plan.get("size"):
-            drop(c, f"step_size `{c.get('step_size')}` 与本轮下发的 `{plan.get('size')}` 不符")
-            continue
-
-        # —— 可行性：估时装不下剩余墙钟就判废（新版契约不再有 min_viable_h 兜底字段）
+        # —— 可行性：估时装不下剩余墙钟就判废
         cap = budget_cap_h
         est = float(c.get("cost_estimate_h") or 0)
         if est > cap:
@@ -1689,11 +1659,10 @@ def step1_judge(state: dict, cands: list[dict], sched: dict, budget_min: int):
     d = node_dir(nid)
     blocks = []
     for i, c in enumerate(cands):
-        plan = c.get("_plan") or {}
         tgt_desc = c.get("_target_key") or "未定坐标"
         body = str(c.get("body") or c.get("text") or "").strip()
         blocks.append(
-            f"### Candidate {i}（_id={c['_id']}｜步长 {plan.get('size')}｜靶点坐标: {tgt_desc}"
+            f"### Candidate {i}（_id={c['_id']}｜靶点坐标: {tgt_desc}"
             f"｜预估 {c.get('cost_estimate_h')}h）\n\n{body}")
     obj = run_node("step1_judge.md", d, d / "judge.md", "judge", "judge",
                    ["## 1. 候选方案证据核验", "## 3. 最终裁决"], state,
@@ -1739,17 +1708,12 @@ def step3_experiment(state: dict, hypo: dict, sched: dict, budget_min: int):
     三合一单卡串行执行，遵循边做边写的渐进式落盘纪律。
     产物是 Markdown+frontmatter（experiment.md），折成下游 result 形状后返回。"""
     d = Path(hypo["_dir"])
-    plan_meta = hypo.get("_plan") or {}
-    spec = size_spec(plan_meta.get("size", ""))
     log(f"---- Step3 端到端实验落地 {hypo['_nid']}（预算 {budget_min} 分钟）")
     obj = run_node("step3_experiment.md", d, d / "experiment.md", "experiment", "experiment",
                    ["## 1. 实验方案与控制变量", "## 2. 运行前工程与配置自查 (Preflight)", "## 3. 评测指标与结果分析"], state,
                    extra={"HYPOTHESIS_FILE": str(d / "hypothesis.md"),
                           "HYPOTHESIS": hypo_inject(hypo),
                           "COST_CAP_H": round(budget_min / 60.0, 2),
-                          "STEP_SIZE": plan_meta.get("size"),
-                          "MAX_VARS": spec.get("max_vars", 1),
-                          "INIT_FROM": spec.get("init_from", "best_only"),
                           "BEST_MODEL_PATH": state["best"].get("model")},
                    timeout_min=budget_min, with_agents=True, retries=0, text_contract=True)
     if not obj:
@@ -1863,8 +1827,7 @@ def step5_record(state: dict, hypo: dict, result: dict) -> None:
     state["nodes"].append({
         "id": nid, "kind": "exp", "ts": now_iso(), "title": hypo.get("title"),
         "layer": hypo.get("layer"), "target": tgt_str,
-        "step_size": plan_meta.get("size") or hypo.get("step_size"),
-        "regime": plan_meta.get("regime"),
+        "regime": sched.get("mode"),
         "score": score, "delta": delta, "adopt_threshold": thr,
         "delta_vs": base_from,
         "eval_mode": (metrics or {}).get("eval_mode"), "eval_n": eval_n_of(metrics),
@@ -1877,7 +1840,7 @@ def step5_record(state: dict, hypo: dict, result: dict) -> None:
 
     hypo_head = "\n".join(str(hypo.get("body") or "").splitlines()[:4])
     journal_append(
-        f"## {nid} [{now_iso()}] {plan_meta.get('size')} / {hypo.get('layer')} / {tgt_str}\n"
+        f"## {nid} [{now_iso()}] {sched.get('mode')} / {hypo.get('layer')} / {tgt_str}\n"
         f"- 猜想: {hypo.get('title')}\n"
         f"- 靶点: {tgt_str}（预估 {hypo.get('cost_estimate_h')}h）\n"
         f"- 假说要点:\n{hypo_head}\n"
@@ -1928,92 +1891,57 @@ def gc_checkpoints(state: dict) -> None:
         log(f"  GC 回收 {freed / 2**30:.1f} GiB")
 
 
-# ---------------------------------------------------------------- 5. 调度（退火 / 重新点火）
-# 2026-09-07 用户决策：删掉按步长分级的成本上限（原 large=3h / medium=1.5h / small=0.6h）
-# 与"单个节点不超过剩余 30%"的硬配额。时间纪律只管两头——Golden Init 有独立窗口、
-# 收尾有保留预算；中间每一步用多久由节点自己决定（各节点 prompt 的"时间观"一段）。
-
-
-def recipe_stable(state: dict) -> tuple[bool, str]:
-    """配方成没成立——这是比"用掉多少时间"更好的退火时钟。
-
-    「前期步子大」的真正理由是还没有可叠加的 best：格式错、不会停、缺解题范式往往叠在
-    一起。一旦有了协议对齐、能停、且明显优于基线的 best，就该转成小步往上爬。
-    """
-    best = state.get("best") or {}
-    if not best.get("node"):
-        return False, "还没有任何被采纳的节点，配方尚未成立"
-    m = best.get("metrics") or {}
-    for name in ("format_error_rate", "truncation_rate"):
-        v = m.get(name)
-        if isinstance(v, (int, float)) and v > 0.10:
-            return False, f"best 的 {name}={v} 仍 > 0.10，协议/停机层面还没稳住"
-    return True, "已有被采纳且格式/截断可控的 best"
+# ---------------------------------------------------------------- 5. 调度（常态探索 / 重新点火 / 收尾保护）
 
 
 def schedule(state: dict, frac_left: float, left_h: float | None = None) -> dict:
-    """退火 + 重新点火。
-
-    步长（这一步在配方空间里走多远）由 regime 决定并按候选逐个下发；墙钟不再是
-    步长的函数——可用墙钟就是全部剩余时间，中间步骤跑多久由节点自己决定。
-    原来用 cost_cap 编码"步子大小"会得出"贵的小步"这种最差组合。
+    """极简三态调度：
+    1. 平台期重新点火（reignite）：连续两次无提升（no_improve_streak >= 2）时触发。
+       给出类似 bootstrap 的破局提示，踢掉最近采纳节点的坐标，鼓励跳出局部最优、尝试全新范式（如接 RL）。
+    2. 收尾保护（polish）：剩余墙钟 <= 25% 时触发。
+       提示避免发起耗时过长的大改动，只做低风险、稳健的收尾。
+    3. 常态运行（explore）：其余所有情况。
+       不限制步伐大小，不限制模块个数，自由探索与机理叠加。
     """
     if left_h is None:
         left_h = remaining_h()
     streak = state.get("no_improve_streak", 0)
-    plateau = streak >= PLATEAU_K
     stuck = state.get("consec_rejects", 0) >= 2
-    stable, stable_why = recipe_stable(state)
 
-    if plateau and frac_left > 0.25 and not stuck:
+    # 连续两次无提升即判定为平台期，启动重新点火
+    if streak >= 2 and frac_left > 0.25 and not stuck:
         regime = "reignite"
         state["reignite_count"] = state.get("reignite_count", 0) + 1
-        hint = (f"已连续 {streak} 个节点没有提升，判定进入平台期。本轮**只接受策略层的换假说**："
-                "换训练范式、加冷启动阶段、改目标函数、换数据构造思路。"
-                "必须显式写出你准备放弃的旧假说，否则就是换个说法再做一次。"
-                "编排器已把最近两个被采纳节点的坐标从坐标池里剔除。")
+        hint = (f"【重新点火】已连续 {streak} 个节点没有提升，判定进入平台期。\n"
+                "请跳出当前的局部调优思维：允许并强烈建议尝试全新路线或进行范式跃迁"
+                "（例如：若当前一直做 SFT，可基于当前 best 引入 RL/GRPO/DPO，或重塑数据构造与奖励机制）。\n"
+                "编排器已把最近两个被采纳节点的坐标从坐标池中剔除，请探索全新机理。")
+        layers = ["strategy", "exec"]
     elif frac_left <= 0.25:
         regime = "polish"
-        hint = ("收尾阶段：只做低风险、短周期、可回滚的小步（解码参数、生成配置、"
-                "格式对齐、单个超参）。大改方差高，一次失败会把几小时的配方打回去。")
-    elif not stable:
-        regime = "bootstrap"
-        hint = (f"配方尚未成立（{stable_why}）。本轮走大步：先把「模型到底死在哪」变成"
-                "可证伪的事实——一个能区分『格式/停机问题』与『能力问题』的实验，"
-                "比十次调 LR 值钱。允许从基座重开。")
-    elif frac_left > 0.55:
-        regime = "climb_wide"
-        hint = (f"配方已成立（{stable_why}）且预算充裕。主线走中步在 best 上叠加，"
-                "同时留一个大步探针继续问机制层面的问题。")
+        hint = ("【收尾保护】实验剩余时间有限（<= 25%），请勿发起耗时过长或风险过高的大改动（如全新的长周期多阶段训练）。\n"
+                "聚焦于低风险、稳健、可回滚的参数收敛与配置对齐，确保产物能安全落盘。")
+        layers = ["exec"]
     else:
-        regime = "climb"
-        hint = (f"配方已成立（{stable_why}），预算进入中段。以能稳定叠加的中步为主，"
-                "附一个小步兜底；不要推翻重来。")
+        regime = "explore"
+        hint = ("【常态探索】围绕当前发现的瓶颈自由提出因果假说。不设人为步伐与模块数量限制，"
+                "只要机理闭环、现象支撑充分，既可以在当前 best 上精细叠加，也可以开启多阶段扩展（如基于 SFT 接 RL）。")
+        layers = ["strategy", "exec"]
 
-    rspec = (step_policy().get("regimes") or {}).get(regime, {})
-    sizes = list(rspec.get("sizes") or ["medium"] * max(2, N_HYPO - 1))
-    layers = list(rspec.get("layers") or ["exec", "strategy"])
-    # N_HYPO 是并行宽度旋钮：按它裁剪/补齐 regime 的步长序列，保留最后一档做兜底
-    if len(sizes) > N_HYPO:
-        sizes = sizes[:N_HYPO]
-    while len(sizes) < N_HYPO:
-        sizes.append(sizes[-1])
-
-    # 可用墙钟 = 全部剩余时间（收尾保留已在外层扣掉）。没有按步长/按比例的配额：
-    # 中间步骤跑多久由节点按方案自己决定，唯一的硬边界是全局墙钟与收尾保留。
     cost_cap_h = round(max(0.3, left_h), 2)
-
-    sched = {"mode": regime, "sizes": sizes, "layers": layers,
-             "n_cand": len(sizes), "cost_cap_h": cost_cap_h,
-             "recipe_stable": stable, "hint": hint}
+    sched = {
+        "mode": regime,
+        "layers": layers,
+        "n_cand": N_HYPO,
+        "cost_cap_h": cost_cap_h,
+        "hint": hint,
+    }
 
     if stuck:
-        # 连续空轮说明约束把流程卡死了，放宽比继续空转划算
         sched["mode"] += "+relaxed"
-        sched["layers"] = ["exec", "strategy"]
-        sched["hint"] += ("\n注意：前两轮的候选全部被否或靶点非法，本轮放宽层级限制。"
-                          "请优先保证现象支撑与可执行性（judge 最看重 grounded），"
-                          "再考虑激进程度。")
+        sched["layers"] = ["strategy", "exec"]
+        sched["hint"] += ("\n注意：前序候选连续被否或靶点非法，请优先保证现象支撑（judge 最看重 grounded）与可执行性。")
+
     return sched
 
 
@@ -2079,15 +2007,14 @@ def finalize(state: dict) -> None:
         "rejected_rounds": state.get("rejected_rounds", 0),
         "final_model_source": str(src),
         "target_histogram": _hist(state, "target"),
-        "step_size_histogram": _hist(state, "step_size"),
+        "regime_histogram": _hist(state, "regime"),
         "layer_histogram": _hist(state, "layer")})
     journal_append(f"## 收尾 [{now_iso()}]\n- best: {json.dumps(state['best'], ensure_ascii=False)}\n"
                    f"- final_model 来源: {src}")
 
 
 def _hist(state: dict, field: str) -> dict:
-    """策略分布直方图：用来量化「比单次 claude 更不 trivial」这个目标。
-    target/step_size 两张图分别回答「改了哪些坐标」和「步子是不是全是小步」。"""
+    """分布直方图：记录采纳或实验节点的属性分布。"""
     hist: dict[str, int] = {}
     for n in state["nodes"]:
         if n.get("kind") == "exp" and n.get(field):

@@ -1,112 +1,20 @@
 {
-  "_comment": "流程记录.md「退火+重新点火」的机器可读形式。步长 = 这一步在训练配方空间里走多远、失败时能排除多大一类做法；不是花了几个小时。编排器按 regime 给每个并行候选下发一个 size，judge 用 rules 做硬校验。",
-  "principle": [
-    "大 = 换假说：失败能排除一整类路线（这类数据 / 这个训练范式 / 这种表征）。",
-    "小 = 拧旋钮：失败只排除一个取值。",
-    "大 != 贵，小 != 便宜。便宜的大步（先修停机/格式协议）前期非常值；贵的小步（同配方重训只改 LR）是浪费。"
-  ],
-  "sizes": {
-    "large": {
-      "question": "失败是不是由这条机制引起的？",
-      "layers": ["exec", "strategy"],
-      "init_from": "base_or_best",
-      "max_vars": 3,
-      "max_modules": 3,
-      "multi_var_requires_coupling": true,
-      "must_discriminate": true,
-      "design": "mechanism_test",
-      "examples": [
-        "按协议对齐的冷启动 SFT（从基座重开）",
-        "SFT 切 RL / DPO",
-        "换 CoT 长度或答案表征（现象被怎样描述）",
-        "改监督信号 / 目标函数",
-        "增加一个训练阶段或课程",
-        "修停机语义：双 EOS + 训练数据结尾终止符一起改"
-      ],
-      "forbidden": [
-        "只调超参（LR / batch / epochs）",
-        "只按比例改数据配比而不改数据生成过程",
-        "只改提示词措辞"
-      ]
-    },
-    "medium": {
-      "question": "在已经成立的方法类里，这个机制的哪一档更好？",
-      "layers": ["exec", "strategy"],
-      "init_from": "best_only",
-      "max_vars": 2,
-      "max_modules": 2,
-      "multi_var_requires_coupling": true,
-      "must_discriminate": false,
-      "design": "coupled_or_single",
-      "examples": [
-        "同一训练方法下换数据过滤规则 / 难度分布 / 长度分布",
-        "调整数据配比并同步放宽 max_tokens（耦合对）",
-        "加一轮拒绝采样再训",
-        "换 chat 模板对齐方式"
-      ],
-      "forbidden": [
-        "推翻当前 best 从基座重开",
-        "同时动两个机制上无关的旋钮"
-      ]
-    },
-    "small": {
-      "question": "这个旋钮往哪边拧？",
-      "layers": ["exec"],
-      "init_from": "best_only",
-      "max_vars": 1,
-      "max_modules": 1,
-      "multi_var_requires_coupling": false,
-      "must_discriminate": false,
-      "design": "single_variable",
-      "examples": [
-        "LR / warmup / epochs 单点",
-        "数据配比 ±10%",
-        "top_p / repetition_penalty 单点",
-        "max_tokens 上限单点"
-      ],
-      "forbidden": [
-        "换训练方法",
-        "从基座重开",
-        "把工程卫生（双 EOS、解码四键、补 tokenizer）当成一次猜想——它们由 Engineer_2 在开工前检查处理"
-      ]
-    }
-  },
+  "_comment": "极简调度策略：常态自由探索、平台期重新点火与收尾保护。不设人为步伐大小与模块数量限制。",
   "regimes": {
-    "bootstrap": {
-      "when": "还没有任何被采纳、且格式/截断可控的 best —— 配方尚未成立",
-      "why": "此时格式错、不会停、缺解题范式往往叠在一起。一个能区分『格式问题 vs 能力问题』的实验，比十次调 LR 值钱。",
-      "sizes": ["large", "large", "medium"],
-      "layers": ["exec", "strategy"]
-    },
-    "climb_wide": {
-      "when": "配方已成立且剩余预算 > 55%",
-      "why": "有可叠加的 best，主线走中步；留一个探针槽位继续问大问题。",
-      "sizes": ["medium", "medium", "large"],
-      "layers": ["exec", "strategy"]
-    },
-    "climb": {
-      "when": "配方已成立且剩余预算在 25%~55%",
-      "why": "邻域逐渐清楚，中步为主、附一个小步兜底。",
-      "sizes": ["medium", "small"],
-      "layers": ["exec", "strategy"]
+    "explore": {
+      "when": "常态运行（默认）",
+      "hint": "围绕当前发现的瓶颈自由提出因果假说。不设人为步伐与模块数量限制，只要机理闭环、现象支撑充分，既可以在当前 best 上精细叠加，也可以开启多阶段扩展（如基于 SFT 接 RL）。",
+      "layers": ["strategy", "exec"]
     },
     "reignite": {
-      "when": "连续 PLATEAU_K 个节点无提升且剩余预算 > 25%",
-      "why": "承认局部最优，强制换机制；靶点不得落在最近已采纳节点的同一坐标上。",
-      "sizes": ["large", "large", "large"],
-      "layers": ["strategy"]
+      "when": "连续两次评测无提升（no_improve_streak >= 2）且剩余预算 > 25%",
+      "hint": "【重新点火】已连续 2 次无提升，判定进入平台期。跳出当前局部调优思维：允许并强烈建议尝试全新路线或进行范式跃迁（例如：若当前一直做 SFT，可基于当前 best 引入 RL/GRPO/DPO，或重塑数据构造与奖励机制）。已剔除最近坐标，请探索全新机理。",
+      "layers": ["strategy", "exec"]
     },
     "polish": {
       "when": "剩余预算 <= 25%",
-      "why": "大改方差高，一次失败可能把几小时配方打回去；只做可回滚的执行层。",
-      "sizes": ["small", "small"],
+      "hint": "【收尾保护】实验剩余时间有限（<= 25%），请勿发起耗时过长或风险过高的大改动（如全新的长周期多阶段训练）。聚焦于低风险、稳健、可回滚的参数收敛与配置对齐，确保产物能安全落盘。",
       "layers": ["exec"]
     }
-  },
-  "anti_patterns": [
-    {"name": "假大步", "detail": "同一套配方重训 3 小时，只把 LR 从 1e-5 调到 2e-5。语义小、钱包大，前期不该做。"},
-    {"name": "假小步", "detail": "收尾阶段还从基座重开 RL。语义大、已经没有回滚预算。"},
-    {"name": "卫生当猜想", "detail": "双 EOS / 解码四键 / 补 tokenizer 由 Engineer_2 在开工前检查处理，不占用猜想额度。"},
-    {"name": "换说法重做", "detail": "reignite 时换个措辞再 SFT 一次。必须显式写出准备放弃的旧假说。"}
-  ]
+  }
 }
