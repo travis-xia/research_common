@@ -20,7 +20,7 @@
 | **Step 0-A Protocol** | 提炼官方评测启动命令、输入模板、终止符、抽取正则 | 评测源码与配置文件 | `research/protocol.md` |
 | **Step 0-B Baseline** | 跑 Zero-shot 基准，记录基线分数、失败分桶与 badcase | 官方评测脚本、基座模型 | `research/baseline.md` |
 | **Step 0-C Literature** | 调研候选数据集、训练范式、工程超参先验 | 联网检索、外部论文 | `research/literature.md` |
-| **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe | 上述 0-A/B/C 三份报告 | `research/golden_recipe.md`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
+| **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe 与演化路线图 | 上述 0-A/B/C 三份报告 | `research/golden_recipe.md`<br>`research/roadmap.json`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
 | **Step 0 Golden Run** | 执行初始化配方，跑通交付管道并全量打分，建立主干模型 | Golden Recipe、基座模型 | `research/golden_run.json`<br>`research/nodes/n000-golden-run/model/` |
 | **Step 1 Hypothesis** | 针对当前瓶颈与指定靶点坐标，提出机理猜想 | 最新评测结果、`experience_bank.md` | `research/nodes/n{seq}-hyp-c{i}/hypothesis.md` |
 | **Step 1 Judge** | 规则初筛 + 两两对决淘汰平庸/重复方案，选出 Winner | 所有候选 `hypothesis.md` | `research/nodes/n{seq}-judge/judge.md` |
@@ -36,5 +36,6 @@
 
 - `research/state.json`: 编排器运行状态、轮次序号、当前最佳模型路径与分数 (`best.model`, `best.score`)。
 - `research/journal.md`: 全局实验流水日志，按时间顺序记录每个实验节点的得分与采纳结论。
+- `research/roadmap.json`: 由 Step 0 确立的任务多阶段演化路线图与门禁参考，指导何时发起范式跃迁。
 - `research/experience_bank.md`: 跨轮次沉淀的长期因果经验库（成功机制与失败教训），猜想与 Judge 节点必读。
 - `research/scripts/diagnose.py`: 由 Step 2 动态生成的日志分面诊断工具脚本。

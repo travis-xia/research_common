@@ -1185,6 +1185,7 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
     artifacts = list(dict.fromkeys(
         [f"research/{PROTOCOL_MD}", "research/baseline.md",
          "research/literature.md", "research/golden_recipe.md",
+         "research/roadmap.json",
          "research/nodes/n000-golden-synthesis/golden_synthesis.md"]))
     obj = {
         "schema_version": 4,
@@ -1204,6 +1205,32 @@ def step0_golden_init(state: dict, budget_min: int) -> bool:
     write_json(RES / "golden_init.json", obj)
     # 配方单独落一份 Markdown：Golden Run 直接读它，续跑也不依赖 golden_init.json 的结构
     (RES / "golden_recipe.md").write_text(recipe, encoding="utf-8")
+    # 演化路线兜底：若 synthesis 未主动落盘 research/roadmap.json，编排器给出一份精简通用的路线图
+    roadmap_path = RES / "roadmap.json"
+    if not roadmap_path.is_file():
+        default_roadmap = {
+            "stages": [
+                {
+                    "id": "stage_1_cold_start",
+                    "name": "Cold Start & Format Alignment",
+                    "exit_condition": "format_error < 0.05 且基础分稳定",
+                    "suggested_actions": ["SFT 数据配比", "格式/模板对齐", "长度过滤"]
+                },
+                {
+                    "id": "stage_2_exploration",
+                    "name": "Reasoning Exploration / Paradigm Shift",
+                    "entry_condition": "Stage 1 格式稳定且主干就绪",
+                    "suggested_actions": ["RL / GRPO", "试错泛化", "外挂/验证器探索"]
+                },
+                {
+                    "id": "stage_3_polish",
+                    "name": "Convergence & Final Polish",
+                    "entry_condition": "临近收尾或提升放缓",
+                    "suggested_actions": ["解码参数", "偏好微调", "超参精调"]
+                }
+            ]
+        }
+        write_json(roadmap_path, default_roadmap)
 
     state["baseline"] = clean_baseline
     state["golden_status"] = status
@@ -1504,16 +1531,6 @@ def step1_hypotheses(state: dict, sched: dict, plans: list[dict],
 
     with ThreadPoolExecutor(max_workers=max(1, len(plans))) as ex:
         results = list(ex.map(one, plans))
-    out = []
-    for p, obj in zip(plans, results):
-        if not obj:
-            continue
-        obj["_id"] = f"cand-{p['idx']}"
-        obj["_nid"] = p["nid"]
-        obj["_dir"] = str(p["dir"])
-        obj["_plan"] = p
-        out.append(obj)
-    return out
     out = []
     for p, obj in zip(plans, results):
         if not obj:
