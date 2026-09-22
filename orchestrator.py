@@ -70,8 +70,8 @@ N_HYPO = int(os.environ.get("RESEARCH_N_HYPO", "3"))
 MIN_GROUNDED = float(os.environ.get("RESEARCH_MIN_GROUNDED", "4"))
 MIN_MECHANISTIC = float(os.environ.get("RESEARCH_MIN_MECHANISTIC", "3"))
 PLATEAU_K = int(os.environ.get("RESEARCH_PLATEAU_K", "2"))
-# 采纳阈值：单次评测分数上的 0.005 远小于采样噪声，会把噪声当成提升。
-# 实际阈值是 max(IMPROVE_EPS, k * se(n))，se 由本次评测样本数算出，见 adopt_threshold()。
+# 采纳阈值：单次评测分数上的0.005远小于采样噪声，会把噪声当成提升。
+# 全量评测定死为IMPROVE_EPS；子集评测挂到噪声上max(IMPROVE_EPS, se(n))，见adopt_threshold()。
 IMPROVE_EPS = float(os.environ.get("RESEARCH_IMPROVE_EPS", "0.01"))
 KEEP_CKPT = int(os.environ.get("RESEARCH_KEEP_CKPT", "2"))
 # Golden Init 占总预算比例（2026-09-09 用户决策：10h 下 = 80 分钟总窗口，即三路
@@ -1866,16 +1866,16 @@ def eval_n_of(metrics: dict | None) -> int:
 
 
 def adopt_threshold(metrics: dict | None) -> float:
-    """采纳阈值 = max(IMPROVE_EPS, k * se)，se 是 n 条样本上准确率的标准误。
+    """采纳阈值：全量评测（official_full）一律定死为IMPROVE_EPS（0.01）。
 
-    n=300 时 se≈0.029。原来固定 0.005 远小于噪声，任何"提升"里都必然混着噪声。
-    子集评测（official_subset 抽样）本身更抖，所以 k 加倍。
+    子集评测（official_subset抽样）本身更抖，仍挂到噪声上max(IMPROVE_EPS, se)，
+    se是n条样本上准确率的标准误（n=300时se≈0.029）。
     """
-    n = max(1, eval_n_of(metrics))
-    se = (0.25 / n) ** 0.5
-    # 子集评测（official_subset 抽样）本身更抖，k 加倍
-    k = 1.0 if (metrics or {}).get("eval_mode") in ("subset", "official_subset") else 0.5
-    return round(max(IMPROVE_EPS, k * se), 4)
+    if (metrics or {}).get("eval_mode") in ("subset", "official_subset"):
+        n = max(1, eval_n_of(metrics))
+        se = (0.25 / n) ** 0.5
+        return round(max(IMPROVE_EPS, se), 4)
+    return IMPROVE_EPS
 
 
 def _scale_of(metrics: dict | None) -> tuple[str, int]:

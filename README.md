@@ -271,10 +271,10 @@ sample_id 与统计数字，给 `grounded/mechanistic/novelty`（1-5）；② �
 这段纪律写在 `eval_policy_text()`（Golden Init 后动态读取 `golden_init.json` 的
 `ruler` 字段），统一注入所有节点，避免各节点各自发明 `--limit`。
 
-### 3.7 采纳阈值挂到噪声上
+### 3.7 采纳阈值：全量定死、子集挂噪声
 
-`adopt_threshold(metrics) = max(IMPROVE_EPS, k × se)`，`se = sqrt(0.25/n)`，
-`k = 0.5`（official_full）/ `1.0`（official_subset）。n=300 时 se≈0.029，所以实际阈值约 0.014。
+全量评测（`official_full`）采纳阈值一律定死为`IMPROVE_EPS`（0.01）。
+子集评测（`official_subset`）本身更抖，仍挂到噪声上`max(IMPROVE_EPS, se)`，`se = sqrt(0.25/n)`（n=300时se≈0.029）。
 
 旧版固定 `IMPROVE_EPS=0.005` 远小于采样噪声，任何"提升"里都必然混着噪声。
 阈值、`eval_mode`、`n` 都会写进 journal 和 state，后续能审。
@@ -516,7 +516,7 @@ research/
   - lens 按 `(round + idx)` 轮转，`lens_histogram` 覆盖到 6 个视角
   - Measurement 在第 1、4、6、8 轮触发共 4 次 = `MAX_MEASURE` 上限，
     间隔满足 `MEASURE_GAP=2`（**修掉了改造中途出现的"平台期每轮都重跑度量"问题**）
-  - 采纳阈值 0.014（n=300 → se≈0.029，k=0.5，max(0.01, k·se)）；Δ=0 的节点不被采纳，
+  - 采纳阈值0.01（全量评测定死为 IMPROVE_EPS）；Δ=0 的节点不被采纳，
     连续两次后进入 reignite
   - `summary.json` 四张直方图齐全（`step_size: large 6 / medium 3`，
     `layer: strategy 6 / exec 3`）
@@ -614,9 +614,8 @@ research/
    Step1 只建纯 CPU 的日志分面分析器，并由其 `rerun.is_baseline` 登记尺子锚点。）
    分数本身不再有这个风险（尺子就是官方 `evaluate.py`，不是每次现写的）；剩下的风险
    是 diagnose.py 算错了分面数字会误导猜想说错方向——但它不产生分数，影响面小得多。
-2. **没有 seed 重复与方差估计。** 采纳阈值已经挂到 `se(n)` 上（比旧版固定 0.005 强得多），
+2. **没有 seed 重复与方差估计。** 采纳阈值全量评测定死为0.01、子集评测挂到`se(n)`上，
    但仍是**单次**评测：没有同一配方跑多 seed 取均值，也没有配对比较。
-   `k=0.5` 这个系数是拍的，没有用真实重复实验校准过。
 3. **污染防护仍是软的（但比旧版硬一点）。** Engineer_1 / data-builder 的提示词现在会
    **要求**在存在 `contamination_check.py` 时必须运行，并把命中数写进 `result.json` 的
    `decontamination` 字段；Engineer_2 会在开工前把查重器路径查好写进结论。但——
