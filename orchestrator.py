@@ -2168,7 +2168,7 @@ def main() -> int:
         state["round"] = state.get("round", 0) + 1
         sched = schedule(state, frac_left, left_h)
         log(f"==== Round {state['round']}｜regime={sched['mode']}｜"
-            f"步长 {'/'.join(sched['sizes'])}｜配方成立={sched['recipe_stable']}｜"
+            f"层级 {'/'.join(sched['layers'])}｜"
             f"剩余 {left_h:.2f}h（收尾保留外全部可用，时长由节点自决） ====")
         save_state(state)
 

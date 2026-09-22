@@ -15,12 +15,11 @@ m.adopt_golden_into_state(st)
 st = m.load_state()
 
 sched = m.schedule(st, 1.0, 8.0)
-m.log(f"regime={sched['mode']} sizes={sched['sizes']} layers={sched['layers']} "
-      f"配方成立={sched['recipe_stable']} cap={sched['cost_cap_h']}h")
+m.log(f"regime={sched['mode']} layers={sched['layers']} cap={sched['cost_cap_h']}h")
 
 plans = m.assign_plans(st, sched)
 for p in plans:
-    print(f"    cand-{p['idx']}: size={p['size']} layers={p['layers']}")
+    print(f"    cand-{p['idx']}: layers={p['layers']}")
 
 cands = m.step1_hypotheses(st, sched, plans, 14)
 m.log(f"产出候选 {len(cands)}")
