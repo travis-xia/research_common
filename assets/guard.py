@@ -29,6 +29,27 @@ PROTECTED = [
 PHASE_WRITABLE = {"research/protocol.md": {"golden_protocol", "measurement"}}
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "StrReplace"}
 DESTRUCTIVE = re.compile(r"rm\s+(-[a-zA-Z]*\s+)*.*?(research/|final_model|best_model)")
+# 规则 5：只精确拦截这三个全局搜索目标——`/`、`/root`、`/root/paddlejob/rl-public`，
+# 会遍历整个文件系统或共享机上的他人目录。其它绝对路径（如 /root/x/y、/data/foo）不拦。
+# 边界 (?:^|[\s;&|(]) 保证是命令段开头的 find；结尾 (?:\s|$|[;&|]) 保证 /root 不会
+# 误匹配到 /root2 这类前缀相同的路径。
+GLOBAL_FIND = re.compile(
+    r"(?:^|[\s;&|(])find\s+(?:"
+    r"/|/root/?|/root/paddlejob/rl-public/?"
+    r")(?:\s|$|[;&|])"
+)
+# 规则 6：按名字/模式杀进程会误杀同机器上别人的进程。必须用具体数字 PID。
+# 覆盖 pkill、killall，以及 kill 搭配 pgrep / `ps ... | grep` 这类字符串模式。
+KILL_BY_NAME = re.compile(
+    r"(?:^|[\s;&|(])(?:pkill|killall)\b"
+    r"|(?:^|[\s;&|(])kill\b[^;&|]*\$(?:\()?(?:pgrep|pidof|ps\b)"
+    r"|(?:^|[\s;&|(])kill\b[^;&|]*`[^`]*(?:pgrep|pidof|ps\b)[^`]*`"
+    r"|(?:^|[\s;&|(])kill\b[^;&|]*\|\s*(?:xargs\s+)?kill\b"
+    r"|(?:^|[\s;&|(])kill\b[^;&|]*\$\([^)]*\|[^)]*grep"
+    r"|(?:^|[\s;&|(])xargs\s+(?:-[a-zA-Z0-9]+\s+)*kill\b"
+)
+# `kill 12345` / `kill -9 12345` 这类带数字 PID 的调用是放行的。
+KILL_WITH_PID = re.compile(r"(?:^|[\s;&|(])kill\s+(?:-[a-zA-Z0-9]+\s+)*\d+(?:\s+\d+)*\s*(?:$|[;&|])")
 
 
 def log(decision: str, tool: str, detail: str) -> None:
@@ -94,6 +115,16 @@ def main() -> None:
                 deny(tool, f"命令试图写入受保护路径 {hit}：{cmd[:200]}")
         if DESTRUCTIVE.search(cmd):
             deny(tool, f"禁止删除研究状态/模型目录：{cmd[:200]}")
+        # 规则 5：拦截对 / 、/root、/root/paddlejob/rl-public 的全局 find。
+        # 逐段判断，命中即 deny。
+        for seg in re.split(r"[;&|]+", cmd):
+            if GLOBAL_FIND.search(" " + seg.strip()):
+                deny(tool, f"禁止对 /、/root、/root/paddlejob/rl-public 做全局 find：{seg.strip()[:200]}。"
+                           "请把查找范围限定在当前工作目录或具体子目录，如 `find ./research -name ...`。")
+        # 规则 6：拦截按名字/模式杀进程，强制用具体数字 PID。
+        if KILL_BY_NAME.search(cmd) and not KILL_WITH_PID.search(cmd):
+            deny(tool, f"禁止按进程名/模式杀进程（可能误杀同机器他人进程）：{cmd[:200]}。"
+                       "请先用 `pgrep -f <pattern>` 确认，再对具体数字 PID 执行 `kill <PID>`。")
 
     log("allow", tool, json.dumps(ti, ensure_ascii=False)[:300])
     sys.exit(0)
