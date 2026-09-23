@@ -59,6 +59,7 @@
   - 严禁把所有报告编写留到最后（必须边做边写入盘上）。
   - 严禁导出残缺模型目录（如遗漏 tokenizer、未 merge adapter）。
   - 严禁篡改、编造评测分数或评测样本量。
+  - 训练和评测必须前台跑完。禁止把命令放后台；若回了 `Command running in background`，先读回结果、写完产物再结束。
 
 - **Output Requirements (产物契约与输出限制)**:
   - 必须输出产物文件: `{{CONTRACT_PATH}}`
