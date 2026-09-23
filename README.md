@@ -89,21 +89,18 @@ Step0 Golden Init（预算 10%，从 golden 信封 35% 里出）
    ↓
 Golden Run（golden 信封 35% 的剩余，n000-golden-run）
    └─ 不进循环，先照 golden_recipe 跑一次完整训练 + **官方全量评测**建立主干
-      ├─ 复用 Engineer_2（开工前检查）→ Engineer_1 → 记录；不走 Step2（无猜想）也不走 Step3
-      │  （规划字段已合并进 recipe，由 synthesis 一次写出）
-      ├─ 成功（官方全量 Δ ≥ 0）→ 写入 best，成为主干，第一轮直接是 climb_wide
+      ├─ 由 golden_run 节点一次做完：开工前自查配置 → 训练 → 记录；不走猜想、也不走 Judge
+      ├─ 成功（官方全量 Δ ≥ 0）→ 写入 best，成为主干
       └─ 失败 → **不重试**，如实写 research/golden_run.json 注入后续所有节点，
-         best 仍为空 → 第一轮照旧 bootstrap 走大步（bootstrap 从此是兜底路径）
+         best 仍为空 → 第一轮照旧走 explore
    ↓
 loop:
-   [Step1 Measurement]  ← 度量不准/信号模糊/不知道该往哪改时触发（有次数与间隔上限）
-   Step2 猜想 × N       ← 并行独立进程；编排器给每个槽位分配【互斥坐标 + 视角 + 步长】
+   [Step2 Measurement]  ← 候选全被否决时触发（有次数上限，且同一份评测结果不重复诊断）
+   Step1 猜想 × N       ← 并行独立进程；每个槽位只下发本轮允许的层级，靶点由节点自己选
    硬规则前筛           ← 编排器代码执行，不调 LLM
-   Step2-judge          ← 只做证据核对 + 两两对比；证据/度量不足则**回 Step1**
-   [Step3 策略规划]     ← 非 small 步长、多变量、或成本 > 1.5h 时触发
-   Step4 Engineer_2     ← **开工前**检查工程细节，发现问题当场改（不占卡，≤20 分钟）
-   Step4 Engineer_1     ← 实验阶段：实现方案 + 跑出真实数字
-   Step5 记录           ← journal + state + best 更新 + checkpoint GC
+   Step1-judge          ← 证据核对 + 两两对比；全否则回 Step2 做度量再重猜
+   Step3 Experiment     ← 单节点串行：规划方案 + 开工前自查并就地修补 + 占卡训练与统一尺子评测
+   Step5 记录 + Archive ← 记账、更新 best，并让归档节点把因果对追加进 experience_bank.md
    ↓
 finalize: best → ./final_model
 ```
@@ -176,37 +173,27 @@ Step3 信息更全。代价是 synthesis 不持卡，`est_min` 只能是先验�
 `MEASURE_GAP=2` 个实验。没有这个闸，平台期里每一轮都会重跑尺子评测把预算吃光。
 产物里的 `suggested_targets` 会回喂给坐标分配。
 
-### 3.3 步长划分：什么叫大一点、什么叫小一点
+### 3.3 调度：三态，不再按步长分档
 
-`assets/step_policy.json` 是机器可读的定义，会注入每个节点的提示词，编排器逐条硬校验。
+步长分档（large/medium/small）与 `recipe_stable()` 已在 2026-09-22 删除，`schedule()`
+现在只按剩余预算和连续无提升轮数切三态，不再下发步长、也不再逐条校验步长契约：
 
-**步长 = 这一步在训练配方空间里走多远、失败时能排除多大一类做法。不是花了几个小时。**
-大 ≠ 贵，小 ≠ 便宜：便宜的大步（先修停机/格式协议）前期很值；贵的小步（同配方重训只改 LR）是浪费。
+- `explore`（默认）→ strategy + exec 全开，不限模块数
+- `reignite`（连续 `no_improve_streak >= 2` 且剩余 > 25%）→ 同样全开，但提示词要求跳出局部调优
+- `polish`（剩余 ≤ 25%）→ 只许 exec 层
 
-- **large**：问"失败是不是由这条机制引起的"。允许 `base_or_best` 起点、最多 2 个**耦合**变量、
-  必须给竞争机制与区分方式。例：协议对齐的冷启动 SFT、SFT→RL/DPO、换 CoT 表征、改目标函数。
-  禁止：只调超参、只按比例改配比、只改提示词措辞。
-- **medium**：问"已成立的方法类里哪一档更好"。必须 `best_only`、最多 2 个耦合变量。
-  例：换过滤规则/难度分布/长度分布、配比与 `max_tokens` 同调、加一轮拒绝采样。
-- **small**：问"这个旋钮往哪边拧"。`best_only`、严格单变量、只允许 exec 层。
-  例：LR、配比 ±10%、top_p、`max_tokens` 单点。
+`assets/step_policy.json` 仍保留这三态的说明文字，但编排器不再读取它，提示词里也没有
+`{{STEP_POLICY}}` 占位符，它目前不参与任何决策。
 
-**regime 决定步长分布**（`schedule()`），时钟不是纯时间而是**配方成没成立**
-（`recipe_stable()`：有被采纳的 best，且它的 `format_error_rate`/`truncation_rate` ≤ 0.10）：
+坐标层面的约束不在 `schedule()` 里做，而在 `prefilter_candidates()` 的硬规则里：
+同一轮内完全相同的靶点组合直接判废；跨轮上，一个靶点组合里的每个坐标都已试过 ≥2 次
+且从未被采纳时，该组合也判废。所以"换个说法再做一次"会被挡掉，但被采纳过的坐标不受影响，
+可以在它之上继续叠加。
 
-- `bootstrap`（配方未成立）→ `large/large/medium`，允许从基座重开
-- `climb_wide`（配方成立且剩余 > 55%）→ `medium/medium/large`（留一个大步探针）
-- `climb`（配方成立，剩余 25%~55%）→ `medium/small`
-- `reignite`（连续 `PLATEAU_K` 无提升且剩余 > 25%）→ `large/large/large`，只许 strategy 层，
-  且**把最近两个被采纳节点的坐标从坐标池里剔除**（否则容易变成"换个说法再做一次"）
-- `polish`（剩余 ≤ 25%）→ `small/small`，只许 exec 层
-
-**预算与步长解耦，且没有中间时间配额**（2026-09-07 用户决策）：`cost_cap_h = 全部剩余
-时间`（收尾保留已扣掉）。原来 `cost_cap = min(该步长的上限, 剩余可用 × 30%)` 会让
-"9 分钟节点预算"这种事真实发生（第 4 次 run 的 n081 因它被迫子集评测、n032 因按比例的
-per-update 耗时中止线被 abort）；现在唯一的硬边界是全局墙钟与收尾保留，**中间每一步
-跑多久由节点自己决定**，prompt（各节点自己的"时间观"一段）明确要求"追求最大性能：全量数据、
-充分训练与监督优先于省时间"。步长仍然只决定配方空间里走多远，不再是时间配额。
+**预算没有中间时间配额**（2026-09-07 用户决策）：`cost_cap_h = 全部剩余时间`（收尾保留
+已扣掉）。原来按步长上限和剩余预算比例双重封顶会让"9 分钟节点预算"这种事真实发生
+（第 4 次 run 的 n081 因它被迫子集评测、n032 因按比例的 per-update 耗时中止线被 abort）；
+现在唯一的硬边界是全局墙钟与收尾保留，**中间每一步跑多久由节点自己决定**。
 
 ### 3.4 机制锚点自主归因与范式推进（废除死板退火）
 
@@ -219,7 +206,8 @@ per-update 耗时中止线被 abort）；现在唯一的硬边界是全局墙钟
   - **因果耦合要求**：允许多模块协同，但多模块必须具备明确的因果关联（如改变训练范式同时调整奖励/采样机制）。
 - **极简调度三态**：
   - **常态探索（explore）**：完全不控制步伐大小与模块数量，只要因果闭环即可自由探索、在 best 上持续叠加，鼓励多阶段范式跃迁（如基于 SFT 接 RL）；
-  - **平台期重新点火（reignite）**：连续 2 次无提升时强制打破局部调优，踢掉最近坐标，强烈提示尝试全新路线或跃迁到 RL；
+  - **平台期重新点火（reignite）**：连续 2 次无提升时提示跳出局部调优、尝试全新路线或跃迁到 RL；
+    坐标约束由硬规则执行——试过 ≥2 次且从未采纳的坐标会被判废，被采纳过的坐标不剔除，可继续叠加；
   - **收尾保护（polish）**：剩余预算尾声（≤25%）提示禁止发起耗时巨大的长周期重训，聚焦于快速收敛的稳妥参数调优。
 - **多样性与防撞车**：由编排器硬规则在同一轮并行候选间禁止完全相同的靶点组合，由 Step1 自主发掘互补的机理方向。
 
@@ -227,12 +215,11 @@ per-update 耗时中止线被 abort）；现在唯一的硬边界是全局墙钟
 
 **第一层（编排器代码，不调 LLM）** `prefilter_candidates()`：
 
-- 主动弃权 / 靶点非法或冻结 / 层级越权 / 本轮候选靶点组合重复
-- 缺 `phenomenon` 或 `evidence.sample_ids`（无现象支撑）、缺 `falsified_if`（不可证伪）
-- **墙钟装不下**：`cost_estimate_h` 超过剩余墙钟且没给能跑完的 `min_viable_h`
-- **平庸重复**：同坐标已试 ≥2 次均未采纳，却没写 `differs_from_previous`
+- 主动弃权 / 靶点非法或冻结 / 层级越权 / 本轮候选靶点组合完全相同
+- **墙钟装不下**：`cost_estimate_h` 超过剩余墙钟
+- **跨轮重复**：靶点组合里的每个坐标都已试 ≥2 次且从未被采纳
 
-**第二层（LLM）** `step2_judge.md`：只做两件事——① 打开 `last_run.jsonl` 逐个核对引用的
+ **第二层（LLM）** `step1_judge.md`：只做两件事——① 打开 `last_run.jsonl` 逐个核对引用的
 sample_id 与统计数字，给 `grounded/mechanistic/novelty`（1-5）；② 对存活候选**两两对比**，
 每对只回答"哪一个的失败能排除更大一类做法"。不按"哪个更可能涨分"选，因为 LLM 预测不准分数。
 
@@ -281,31 +268,27 @@ sample_id 与统计数字，给 `grounded/mechanistic/novelty`（1-5）；② �
 旧版固定 `IMPROVE_EPS=0.005` 远小于采样噪声，任何"提升"里都必然混着噪声。
 阈值、`eval_mode`、`n` 都会写进 journal 和 state，后续能审。
 
-### 3.8 Step4 拆成两个工程师角色：Engineer_1 实现代码 ──► Engineer_2 运行前代码检验 ──► Engineer_1 启动运行
+### 3.8 Step3：规划、开工前自查、训练评测合并为一个节点
 
-原设计把 Engineer_2 放在写代码之前，实测发现：在代码还没写出来之前只能空对空看方案，而导致实验报废的 bug 绝大部分恰恰发生在 Engineer_1 写代码、改脚本与调参数的过程中（如 prompt 模板笔误、覆盖 generation_config、丢失终止符、LR 写错等）。
+2026-09-22 起，原来的 Step3 规划、Engineer_2 开工前审查、Engineer_1 训练评测三个节点
+合并成一个 `step3_experiment.md`，由单个进程按顺序做完，产物是 `experiment.md`
+而不是 `plan.json` / `preflight.json` / `result.json`。合并的原因是三者共享同一份上下文，
+拆开只是多付几轮 prompt 开销，并没有换来更干净的归因。
 
-因此明确分工与执行顺序：**Engineer_1 编写实现代码/配置 ──► Engineer_2 运行前代码检验 ──► Engineer_1 启动运行打分**：
+节点内部仍按这个顺序做事，前一步没做完不许跳到后一步：
 
-- **Engineer_2 运行前工程与代码审查**（`step4_engineer2_preflight.md` → `preflight.json`）：
-  在 Engineer_1 完成脚本实现后、**在真正占卡启动实验前**，结合「科学猜想 + 实际代码实现」进行审查（不占卡、十几分钟）。
-  - **单纯排除工程问题**：不做方法论评判（不质疑假说本身），单纯检查代码语法与逻辑 bug、核对超参对齐（防笔误）、检查 prompt 模板与答案标记（逐字对齐协议）、补全显式双 EOS（`eos_token_id`）与采样四键。
-  - **就地修好 (In-place Fix)**：发现问题直接修改盘上文件，扫清工程隐患。
-  - **没有闸门**：不设"缺什么就停跑"的判定，`passed=false` 只是记录，流水线照走——中断比带着一条告警继续跑贵得多。
-  - 便宜由结构保证：`phase="preflight"` 不承担训练/评测，只做代码检查与配置修补。
-- **Engineer_1**（`step4_engineer1_run.md`）：
-  负责编写代码、组织数据生成与训练评测脚本；经过 Engineer_2 的审查与修复后，正式启动跑卡训练、完整落盘并打分。
-  开工前检查的 `fixed` / `notes_for_engineer1` 由 `{{PREFLIGHT}}` 注入，照着用、不用重复查。
-  不重新评价猜想，**不许擅自扩大方案范围**（`vars` 之外的旋钮不能顺手一起改，否则不可归因）。
-  有 `contamination_check.py` 时必须用它自查训练数据；模型存完立刻用统一尺子打一次分。
+- **规划**：写清控制变量、步骤、显存与时间预算。
+- **开工前自查（不占卡）**：在真正启动训练前，对照猜想核对已写好的脚本与配置。
+  这一步只排工程问题，不做方法论评判——查代码语法与逻辑、超参是否与方案一致（防笔误）、
+  prompt 模板与答案标记是否逐字对齐协议、`eos_token_id` 是否覆盖协议里的全部终止符、
+  采样四键是否齐全。发现问题直接改盘上的文件，不设"缺什么就停跑"的闸门。
+- **训练与评测**：占卡跑训练，模型存完立刻用统一尺子打分。有 `contamination_check.py`
+  时必须用它自查训练数据。不许擅自扩大方案范围，否则结果不可归因。
 
-编排器侧随之简化：分数只认 `result.json` 的 `metrics_dev`（不再有
-`metrics_dev_verified` 覆盖），采纳条件里的 `trusted` / `misreporting` 一并删掉——
-留下的门槛是 `status == "ok"` + 模型目录真的存在 + Δ 超过同刻度采纳阈值。
+编排器侧只认 `experiment.md` frontmatter 里折出来的 `metrics_dev`，采纳门槛是
+`status == "ok"` + 模型目录真的存在 + Δ 超过同刻度采纳阈值。
 
-B 组按"分数损失 × 频率"排序，每条都来自 1509 条轨迹的实证。Engineer_2 在开工前照这份清单
-把状态过一遍（它没有卡，所以只看文件、只改配置）；需要真起服务才能验证的那部分，
-在 Engineer_1 自己的窗口里自然会走到：
+开工前自查要过的清单（按历史轨迹里"分数损失 × 频率"排序）：
 
 1. **交付管道可用**（头号杀手，占全部未评分 run 的 50.3%）：目录完整性（权重/config/
    tokenizer 齐全、`safetensors.index.json` 列出的分片全部存在、**不许残留
@@ -368,18 +351,18 @@ research/
   golden_run.json        主干节点结果：配方、官方全量分数、Δ、实际发生、给后续轮次的先验
   state.json             节点树、best 指针、平台期计数、度量账本、序号
   journal.md             人类可读的猜想-实验对日志（跨节点 memory）
-  summary.json           收尾摘要：target / step_size / layer / lens 四张直方图
+  summary.json           收尾摘要：target / regime / layer 三张直方图
   guard.log              每一次工具调用的放行/拦截审计
   action_space.json      操作空间（机器可读）
-  step_policy.json       步长与 regime 策略（机器可读）
+  step_policy.json       三态调度的说明文字（编排器不再读取，不参与决策）
   settings.json          钩子配置（渲染出绝对路径）
   harness_src/           编排器源码快照
   scripts/               diagnose.py：官方日志的分面分析器（Step1 产出，纯 CPU）
   nodes/<nid>/
     *.prompt.md          该节点收到的完整 prompt
     *.stream.jsonl       CLI 的完整事件流（轨迹采集的原始数据）
-    measurement.json / hypothesis.json / rejected.json / judge.json /
-    plan.json / preflight.json / result.json
+    measurement.md / hypothesis.md / rejected.json / judge.md /
+    experiment.md / archive_card.md
     model/               该节点的 checkpoint（会被 GC）
 ```
 
@@ -471,14 +454,12 @@ research/
 预算与资源：
 `RESEARCH_GOLDEN_FRAC=0.10`（10h 下 Golden Init 60 分钟）｜`RESEARCH_GOLDEN_RUN_FRAC=0.35`（Init+Run 合计的信封，Run 拿剩余）｜`RESEARCH_GOLDEN_RUN=1`
 （设 0 可关掉 Golden Run，退回「第一次训练由循环决定」的旧行为，便于做消融）｜
-`RESEARCH_RESERVE_FRAC=0.08`｜
-`RESEARCH_PLAN_TRIGGER_H=1.5`｜`RESEARCH_PREFLIGHT_MIN=35`（Engineer_2 开工前检查的硬上限，
-分钟；唯一有硬配额的中间节点）｜`RESEARCH_KEEP_CKPT=2`
+`RESEARCH_RESERVE_FRAC=0.08`｜`RESEARCH_KEEP_CKPT=2`
 
 后端与调试：
 `RESEARCH_CODEX_EFFORT=high`（codex 档位）｜`RESEARCH_EFFORT=max`（claude 档位）｜
 `RESEARCH_DRY_RUN=1` 空跑｜`RESEARCH_DRY_GOLDEN_FAIL=1` 空跑时让 Golden Run 失败，
-用来验证落回 bootstrap 的兜底路径｜`RESEARCH_USE_AGENTS=0` 关掉 claude 后端的 `--agents`｜
+用来验证主干没建起来时第一轮照旧走 explore 的兜底路径｜`RESEARCH_USE_AGENTS=0` 关掉 claude 后端的 `--agents`｜
 `RESEARCH_API_RETRIES=3`｜`RESEARCH_API_BACKOFF_S=90`｜`RESEARCH_API_GIVEUP=6`
 
 （`RESEARCH_PASS_TOTAL` 已移除：judge 不再用六维总分放行，改成硬规则 + 两两对比，
@@ -621,10 +602,9 @@ research/
    是 diagnose.py 算错了分面数字会误导猜想说错方向——但它不产生分数，影响面小得多。
 2. **没有 seed 重复与方差估计。** 采纳阈值全量评测定死为0.01、子集评测挂到`se(n)`上，
    但仍是**单次**评测：没有同一配方跑多 seed 取均值，也没有配对比较。
-3. **污染防护仍是软的（但比旧版硬一点）。** Engineer_1 / data-builder 的提示词现在会
-   **要求**在存在 `contamination_check.py` 时必须运行，并把命中数写进 `result.json` 的
-   `decontamination` 字段；Engineer_2 会在开工前把查重器路径查好写进结论。但——
-   `myptbench` **没有**把官方的
+3. **污染防护仍是软的（但比旧版硬一点）。** Step3 实验节点与 data-builder 的提示词会
+   **要求**在存在 `contamination_check.py` 时必须运行，并把命中数写进 `experiment.md`。
+   但 `myptbench` **没有**把官方的
    `contamination_check.py` 与 `test_data.json` 拷进任务目录（见 12.6 第 3 条），
    所以在本机跑时这条路径实际走不到，退化成通用规则。**要真正闭环，得先把官方查重器接上。**
 4. **codex 后端没有接钩子。** 文件级保护（不许改 `evaluate.py`/`templates`）在 codex 后端
@@ -633,7 +613,7 @@ research/
 5. **没有 token / 成本预算控制。** 只按 wall-clock 分配；`--max-budget-usd` 没接，
    用量只记录不约束。实测量级（codex + gpt-5.6-terra）：Golden Init 一个节点
    253 万 input / 1.8 万 output tokens；一轮「3 猜想 + judge」合计约 98 万 input / 2.1 万 output。
-   本次改造把 Measurement 变成可能多次触发、prompt 也变长了（多注入 `step_policy.json`），
+   本次改造把 Measurement 变成可能多次触发、prompt 也变长了，
    **token 账只会更高**；跟单次 baseline 比「相同预算」时这点必须补。
 6. **judge 只放行 1 个候选，不支持并行跑多个实验**（单卡限制）。多卡切分未实现，
    `NUM_GPUS>1` 时不会自动做实验并行。
@@ -643,9 +623,9 @@ research/
    定时器杀掉——靠 SIGTERM→finalize 保住 final_model，但会损失后面所有轮次。
 8. **结构化输出没用 `--json-schema` / `--output-schema`**，靠「写文件 + 字段校验 + 带反馈重试」。
    比 schema 强制弱，但产物文件同时也是归档证据，取舍如此。
-9. **`recipe_stable()` 的判据比较粗**：只看 best 是否存在 + `format_error_rate` /
-   `truncation_rate` ≤ 0.10。如果尺子评测没报这两个字段，就会直接判「成立」，
-   于是第一次采纳之后立刻从 bootstrap 转进 climb。阈值 0.10 也是拍的。
+9. **调度切档不再看配方成没成立。** `recipe_stable()` 已随步长分档一起删除，
+   `schedule()` 现在只看 `no_improve_streak` 和剩余预算比例切 explore / reignite / polish。
+   代价是"主干还没建起来"和"主干已稳定"走同一套 regime，区分全靠提示词。
 10. **黄金流程挖掘（流程记录.md 的第二件事）完全没写。** `stream.jsonl` 全都留着了，
     但没有任何离线分析代码去从轨迹里挖范式。注意两个后端的事件 schema 不同
     （claude 是 `type=result` 等，codex 是 `thread.started` / `turn.completed` 等），
@@ -663,11 +643,11 @@ research/
   claude 后端对 `agents/claude`。同 `NUM_HOURS`、同 `AGENT_CONFIG`、同 `MODEL`、
   同 `TASK`、同卡数——CLI 和模型都要配对，否则比的是 CLI 而不是流程
 - 最终分数只认官方 `evaluate.py --limit -1 --json-output-file`，不看 dev 分数
-- 至少 3 次重复；`summary.json` 的四张直方图用来量化「策略是否比 baseline 更不 trivial」：
+- 至少 3 次重复；`summary.json` 的三张直方图用来量化「策略是否比 baseline 更不 trivial」：
   - `target_histogram`：改了哪些操作空间坐标（是否只会动一个坐标）
-  - `step_size_histogram`：步子是不是全是小步（这是目标 1 最直接的度量）
+  - `regime_histogram`：explore / reignite / polish 各占多少轮
   - `layer_histogram`：exec / strategy 的比例
-  - `lens_histogram`：并行多样性有没有真的落地
+  （`step_size` 与 `lens` 已随步长分档删除，不再统计）
 - 记录两种预算：wall-clock（天然对齐 `NUM_HOURS`）与总 token（本版本只记录不约束）
 
 ## 11. 怎么删

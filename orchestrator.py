@@ -316,7 +316,7 @@ def journal_for_prompt(state: dict) -> str:
 
 
 def tried_targets(state: dict) -> dict:
-    """坐标 -> {"n": 次数, "adopted": 是否有过采纳}。用于坐标分配与"已试过"硬规则。"""
+    """坐标 -> {"n": 次数, "adopted": 是否有过采纳}。供硬规则判"同坐标反复试却不采纳"。"""
     out: dict[str, dict] = {}
     for n in state["nodes"]:
         if n.get("kind") != "exp" or not n.get("target"):
@@ -431,8 +431,6 @@ def build_prompt(step_file: str, node_d: Path, contract: Path, extra: dict,
         "JOURNAL": journal_for_prompt(state),
         "ACTION_SPACE": inject_json(
             json.loads((RES / "action_space.json").read_text(encoding="utf-8"))),
-        "STEP_POLICY": inject_json(
-            json.loads((RES / "step_policy.json").read_text(encoding="utf-8"))),
         "EVAL_POLICY": eval_policy_text(),
         "EVAL_CMD_HINT": eval_cmd_hint, "PROTOCOL_SOURCES": protocol_sources,
         "RULER_N": RULER_N, "RULER_MIN_N": RULER_MIN_N,
@@ -1454,13 +1452,6 @@ def step2_measurement(state: dict, reason: str, budget_min: int) -> dict:
 
 
 ACTION_SPACE = None
-STEP_POLICY = None
-
-def step_policy() -> dict:
-    global STEP_POLICY
-    if STEP_POLICY is None:
-        STEP_POLICY = read_json(RES / "step_policy.json") or {"regimes": {}}
-    return STEP_POLICY
 
 
 def action_space() -> dict:
@@ -1582,12 +1573,14 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
                           budget_cap_h: float) -> tuple[list[dict], list[dict]]:
     """硬规则先筛（流程记录.md 猜想 judge 第①条）。
 
-    这一层**不调 LLM**：非法坐标、越权层级、缺 targets、
-    违反步长契约、墙钟装不下，都在这里判废（已废除死板的退火模块数量限制）。
+    这一层**不调 LLM**：非法坐标、越权层级、缺 targets、墙钟装不下，
+    以及"同坐标已经试过两次还没采纳"的重复猜想，都在这里判废
+    （已废除死板的退火模块数量限制）。
     判重（与已归档尤其已证伪的猜想实质重复）交给 Judge——它读 experience_bank。
     留给 LLM 的是②：两两对比选机理潜力。
     """
     survivors, rejected = [], []
+    tried = tried_targets(state)
 
     def drop(c: dict, reason: str):
         log(f"  {c['_id']} 判废：{reason}")
@@ -1640,6 +1633,17 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
         target_combo_key = "+".join(sorted(valid_keys))
         if target_combo_key in seen_target_keys:
             drop(c, f"本轮已有另一个候选选取了完全相同的靶点组合 {target_combo_key}")
+            continue
+
+        # —— 跨轮重复：组合里每个坐标都已试过 >=2 次且从未被采纳，再试就是原地打转。
+        # 多坐标组合按"全部坐标都已耗尽"判断，避免一个新坐标被搭车判废。
+        exhausted = [k for k in valid_keys
+                     if tried.get(k, {}).get("n", 0) >= 2
+                     and not tried.get(k, {}).get("adopted")]
+        if exhausted and len(exhausted) == len(valid_keys):
+            detail = "、".join(f"{k}×{tried[k]['n']}" for k in exhausted)
+            drop(c, f"坐标 {detail} 均已试过至少 2 次且从未被采纳，"
+                    f"再提同一组合是重复劳动，换个坐标或先做度量")
             continue
 
         # 赋回标准规范格式，供下游使用
@@ -1737,7 +1741,7 @@ def step3_experiment(state: dict, hypo: dict, sched: dict, budget_min: int):
                    extra={"HYPOTHESIS_FILE": str(d / "hypothesis.md"),
                           "HYPOTHESIS": hypo_inject(hypo),
                           "COST_CAP_H": round(budget_min / 60.0, 2),
-                          "BEST_MODEL_PATH": state["best"].get("model")},
+                          "BEST_MODEL_PATH": (state.get("best") or {}).get("model")},
                    timeout_min=budget_min, with_agents=True, retries=0, text_contract=True)
     if not obj:
         return None
@@ -1820,10 +1824,9 @@ def same_scale_anchor(state: dict, metrics: dict | None) -> tuple[float | None, 
         "baseline.official（刻度不完全一致）"
 
 
-def step5_record(state: dict, hypo: dict, result: dict) -> None:
+def step5_record(state: dict, hypo: dict, result: dict, sched: dict) -> None:
     """记录猜想-实验对，更新 best，做 checkpoint GC。"""
     nid = hypo["_nid"]
-    plan_meta = hypo.get("_plan") or {}
     metrics = result.get("metrics_dev")
     score = score_of(metrics)
     base, base_from = same_scale_anchor(state, metrics)
@@ -1920,7 +1923,8 @@ def gc_checkpoints(state: dict) -> None:
 def schedule(state: dict, frac_left: float, left_h: float | None = None) -> dict:
     """极简三态调度：
     1. 平台期重新点火（reignite）：连续两次无提升（no_improve_streak >= 2）时触发。
-       给出类似 bootstrap 的破局提示，踢掉最近采纳节点的坐标，鼓励跳出局部最优、尝试全新范式（如接 RL）。
+       给出破局提示，鼓励跳出局部最优、尝试全新范式（如接 RL）。
+       坐标层面的约束由 prefilter_candidates 执行：已试 >=2 次且从未采纳的坐标会被判废。
     2. 收尾保护（polish）：剩余墙钟 <= 25% 时触发。
        提示避免发起耗时过长的大改动，只做低风险、稳健的收尾。
     3. 常态运行（explore）：其余所有情况。
@@ -1938,7 +1942,7 @@ def schedule(state: dict, frac_left: float, left_h: float | None = None) -> dict
         hint = (f"【重新点火】已连续 {streak} 个节点没有提升，判定进入平台期。\n"
                 "请跳出当前的局部调优思维：允许并强烈建议尝试全新路线或进行范式跃迁"
                 "（例如：若当前一直做 SFT，可基于当前 best 引入 RL/GRPO/DPO，或重塑数据构造与奖励机制）。\n"
-                "编排器已把最近两个被采纳节点的坐标从坐标池中剔除，请探索全新机理。")
+                "注意：已试过至少 2 次且从未被采纳的坐标会被硬规则直接判废，请换坐标或换机制，不要重提。")
         layers = ["strategy", "exec"]
     elif frac_left <= 0.25:
         regime = "polish"
@@ -2063,7 +2067,6 @@ def bootstrap() -> None:
     if not act_space_src.is_file():
         act_space_src = AGENT_DIR / "action_space.json"
     shutil.copy2(act_space_src, RES / "action_space.json")
-    shutil.copy2(ASSETS / "step_policy.json", RES / "step_policy.json")
     shutil.copy2(ASSETS / "benchmark_profile.json", RES / "benchmark_profile.json")
     if (PROMPTS / "WORKFLOW_OVERVIEW.md").is_file():
         shutil.copy2(PROMPTS / "WORKFLOW_OVERVIEW.md", RES / "WORKFLOW_OVERVIEW.md")
@@ -2248,7 +2251,7 @@ def main() -> int:
             result = {"status": "failed", "metrics_dev": None,
                       "what_actually_happened": "Step3 Experiment 未产出合法 experiment.md"
                                                 "（见 experiment.stream.jsonl）"}
-        step5_record(state, chosen, result)
+        step5_record(state, chosen, sched, result)
         state = load_state()
 
     finalize(state)

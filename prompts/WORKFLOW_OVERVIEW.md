@@ -7,9 +7,8 @@
 1. **Step 0 Golden Init（仅一次）**: 三路并行（Protocol 查评测规则 + Baseline 跑基线 + Literature 文献调研）→ Synthesis 制定统一尺子与 Golden Recipe → 触发 Golden Run 跑通主干基准。
 2. **Step 1 猜想与裁决 (Hypothesis & Judge)**: 并行生成 N 个猜想 (`hypo-c0/1/2`) → 规则初筛 + Judge 对决选出 Winner。
 3. **Step 2 行为诊断 (Measurement)**: 若候选全否或陷入平台期触发，深挖 badcase 产出诊断报告并沉淀 `research/scripts/diagnose.py`，再回流 Step 1。
-4. **Step 3 实验规划 (Plan)**: 对获胜猜想核算变量、显存与时间预算（小步长可跳过）。
-5. **Step 4 工程核验与实验 (Engineer)**: Preflight 进行开工前静态代码/配置排查（只读修补）→ Run 落实代码改动、跑训练并用统一尺子评测。
-6. **Step 5 知识归档 (Archive)**: 提炼因果对，写入经验卡片并追加到 `experience_bank.md`，更新状态后开启下一轮。
+4. **Step 3 端到端实验 (Experiment)**: 对获胜猜想单节点串行完成三件事——规划控制变量与预算、开工前自查代码与配置并就地修补、占卡训练并用统一尺子全量评测。产物是 `experiment.md`。
+5. **Step 5 知识归档 (Archive)**: 提炼因果对，写入经验卡片并追加到 `experience_bank.md`，更新状态后开启下一轮。
 
 ---
 
@@ -25,9 +24,7 @@
 | **Step 1 Hypothesis** | 针对当前瓶颈与指定靶点坐标，提出机理猜想 | 最新评测结果、`experience_bank.md` | `research/nodes/n{seq}-hyp-c{i}/hypothesis.md` |
 | **Step 1 Judge** | 规则初筛 + 两两对决淘汰平庸/重复方案，选出 Winner | 所有候选 `hypothesis.md` | `research/nodes/n{seq}-judge/judge.md` |
 | **Step 2 Measurement**| （瓶颈/全否触发）深挖日志归因，细化分面指标 | 最新评测日志、错误样本轨迹 | `research/nodes/n{seq}-measure/measurement.md`<br>`research/scripts/diagnose.py` |
-| **Step 3 Plan** | 规划控制变量、步骤清单、显存与时间预算 | 获胜的 `hypothesis.md` | `research/nodes/n{seq}-hyp-c{win}/plan.md` |
-| **Step 4 Preflight** | 启动前静态审查代码与配置，就地修补低级 bug (不占卡) | `plan.md`、修改的代码及 Diff | `research/nodes/n{seq}-hyp-c{win}/preflight.md` |
-| **Step 4 Run** | 实施改动、运行训练与全量评测，记录指标与意外现象 | `plan.md`、`preflight.md` | `research/nodes/n{seq}-hyp-c{win}/result.md`<br>`research/nodes/n{seq}-hyp-c{win}/model/` |
+| **Step 3 Experiment** | 单节点串行：规划控制变量与预算 → 开工前自查代码/配置并就地修补 → 占卡训练与统一尺子全量评测 | 获胜的 `hypothesis.md` | `research/nodes/n{seq}-hyp-c{win}/experiment.md`<br>`research/nodes/n{seq}-hyp-c{win}/model/` |
 | **Step 5 Archive** | 结构化沉淀因果对，追加更新长期知识库 | 本轮猜想、方案与实测指标 | `research/nodes/n{seq}-archive/archive_card.md`<br>`research/experience_bank.md` (追加更新) |
 
 ---
