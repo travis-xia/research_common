@@ -115,7 +115,11 @@ GOLDEN_RUN = os.environ.get("RESEARCH_GOLDEN_RUN", "1") == "1"
 # 35% 是整个 golden 阶段（Init 的调研 + Run）合计的信封，不是 Run 单独的上限
 # （2026-09-22 用户纠偏）：Init 已耗掉的时间从信封里扣，Run 只拿剩余——
 # 10h 下信封 210 分钟，Init 60 分钟，Run ≈ 150 分钟。
+# 信封还有一个绝对上限（2026-09-23 用户决策）：按 35% 算超过 6h 时就封顶在 6h，
+# 多出来的时间留给循环。Init 与 Run 的内部分配比例不变，只是基数从
+# total_h*35% 换成了 min(total_h*35%, 6h)。
 GOLDEN_RUN_FRAC = float(os.environ.get("RESEARCH_GOLDEN_RUN_FRAC", "0.35"))
+GOLDEN_CAP_H = float(os.environ.get("RESEARCH_GOLDEN_CAP_H", "6"))
 # Golden Init 的失败分桶是粗桶（推理错/格式错/截断/抽取失败/复读），不足以支撑
 # "并行候选各守一个坐标"。默认在第一轮猜想之前先做一次 Measurement 把分面铺开。
 MEASURE_FIRST = os.environ.get("RESEARCH_MEASURE_FIRST", "1") == "1"
@@ -1048,7 +1052,13 @@ def repair_recipe(text: str, ruler: dict, baseline: dict) -> str:
     return text
 
 
-def step0_golden_init(state: dict, budget_min: int) -> bool:
+def golden_budget_h(total_h: float) -> float:
+    """Step0（Init 调研 + Golden Run）合计可用的墙钟。
+
+    一般按总预算的 GOLDEN_RUN_FRAC（35%）算；这笔钱超过 GOLDEN_CAP_H（默认 6h）
+    时封顶在 6h，结余留给循环。封顶只缩小基数，Init 与 Run 的内部分配比例不变。
+    """
+    return min(total_h * GOLDEN_RUN_FRAC, GOLDEN_CAP_H)
     """并行建立协议、基线表征和外部知识先验，再由编排器合成 Golden Init。
 
     三个 specialist 写互不重叠的文件。文献节点有独立硬超时，不会因为 baseline
@@ -2142,7 +2152,8 @@ def main() -> int:
     if not (RES / "golden_init.json").is_file():
         # step0_golden_init 现在只在时间上让步：缺协议/缺基线/缺文献/配方不全都会降级
         # 继续（2026-09-10 用户决策：编排器是辅助不是监管），所以这里不再有"直接收尾"。
-        if not step0_golden_init(state, round(total_h * GOLDEN_FRAC * 60)):
+        if not step0_golden_init(state, round(
+                golden_budget_h(total_h) * (GOLDEN_FRAC / GOLDEN_RUN_FRAC) * 60)):
             log("Golden Init 没写出 golden_init.json（异常路径）——带着空开局进循环")
     state = load_state()
     adopt_golden_into_state(state)
@@ -2153,10 +2164,11 @@ def main() -> int:
     # 单机制修改 -> 回滚/晋级"。成功后 recipe_stable() 成立，第一轮直接是 climb_wide；
     # 失败则 best 仍为空，第一轮照旧 bootstrap 走大步（bootstrap 从此是兜底路径）。
     if GOLDEN_RUN and not (RES / "golden_run.json").is_file():
-        # 35% 信封含 Init：从编排器启动到现在的耗时（bootstrap + Init 全程）从信封里扣，
-        # Init+Run 合计不超过 GOLDEN_RUN_FRAC；第二项照旧防透支（剩余−收尾保留−安全垫）。
+        # 35% 信封含 Init，且封顶 GOLDEN_CAP_H：从编排器启动到现在的耗时
+        # （bootstrap + Init 全程）从信封里扣，Init+Run 合计不超过 golden_budget_h；
+        # 第二项照旧防透支（剩余−收尾保留−安全垫）。
         golden_spent_h = max(0.0, total_h - remaining_h())
-        cap_h = min(max(0.0, total_h * GOLDEN_RUN_FRAC - golden_spent_h),
+        cap_h = min(max(0.0, golden_budget_h(total_h) - golden_spent_h),
                     max(0.0, remaining_h() - reserve_h - 0.3))
         if cap_h >= 0.5:
             step0_golden_run(state, int(cap_h * 60))
