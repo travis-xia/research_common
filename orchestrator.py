@@ -1598,7 +1598,6 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
     seen_target_keys: set[str] = set()
     for c in cands:
         plan = c.get("_plan") or {}
-        spec = size_spec(plan.get("size", ""))
 
         if c.get("abstain"):
             drop(c, f"候选主动弃权：{c.get('abstain_reason') or '未说明'}")
