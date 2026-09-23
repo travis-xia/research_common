@@ -511,6 +511,7 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
     n_ev = 0
     last_result = None
     saw_api_err = False
+    saw_bg = False
     with stream.open("w", encoding="utf-8") as sf:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, cwd=str(TASK_DIR), env=env,
@@ -541,6 +542,9 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
                         or "overloaded_error" in line
                         or ("all nodes exhausted" in line and '"error"' in line)):
                     saw_api_err = True
+                # CLI 把阻塞命令自动丢进后台时，回合会在命令结束前就 end_turn
+                if "Command running in background with ID:" in line:
+                    saw_bg = True
                 # claude: {"type":"result",...}；codex: {"type":"turn.completed"|"turn.failed",...}
                 if '"type":"result"' in line or '"type":"turn.' in line or '"type":"error"' in line:
                     try:
@@ -552,7 +556,7 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
             if killer is not None:
                 killer.cancel()
 
-    err_kind = "api" if saw_api_err else None
+    err_kind = "api" if saw_api_err else ("background" if saw_bg else None)
     cost = None
     if isinstance(last_result, dict):
         cost = last_result.get("total_cost_usd")
@@ -785,7 +789,9 @@ def run_node(step_file: str, node_d: Path, contract: Path, label: str, phase: st
       - 网关错误（err=="api"）**且**没拿到产物 -> 原样退避重试，不计入 contract 重试；
       - 拿到产物就立刻成功返回，哪怕过程中出现过网关报错（CLI 自己会重试，
         而且 agent 的命令输出里也可能出现"all nodes exhausted"这类字符串）；
-      - 产物不合法 -> 带着失败原因重开一次（计入 retries）。
+      - 产物不合法 -> 带着失败原因重开一次（计入 retries）；
+      - golden_run/experiment 把命令放进后台就收尾、且盘上没有产物 -> 只补一次收尾
+        （不计入 retries，提示接着已有进度、不要重训）。
 
     重试用完仍不合法时**不判死**（2026-09-10 用户决策）：盘上只要有个能解析的产物，
     就带 `_contract_warning` 原样返回，缺口留给下游节点自己看着办。只有盘上什么都没有、
@@ -799,7 +805,7 @@ def run_node(step_file: str, node_d: Path, contract: Path, label: str, phase: st
         if total_budget_min is not None else None
     )
     feedback = ""
-    for attempt in range(retries + 1):
+    for attempt in range(retries + 1 + 1):
         for api_try in range(API_RETRIES + 1):
             attempt_timeout_s = max(1, int(timeout_min * 60))
             if budget_deadline is not None:
@@ -837,6 +843,7 @@ def run_node(step_file: str, node_d: Path, contract: Path, label: str, phase: st
                     parsed = read_json(contract)
                     if isinstance(parsed, dict):
                         salvage = parsed
+            contract_missing = not (contract.is_file() and contract.stat().st_size > 0)
             if err != "api":
                 break                     # 是节点没做好，交给外层带反馈重开
             api_failures += 1
@@ -855,6 +862,16 @@ def run_node(step_file: str, node_d: Path, contract: Path, label: str, phase: st
                 time.sleep(backoff_s)
         feedback = why
         log(f"  契约校验失败({label}, attempt={attempt}): {feedback}")
+        if (err == "background" and contract_missing and label in ("golden_run", "experiment")
+                and attempt == retries):
+            # 命令被丢进后台、产物还没写：只补这一次。接着已有 checkpoint/脚本，不要重训。
+            feedback = (why + " 训练或评测命令进入了后台，回合在它结束前就停了。"
+                        "接着本目录已有的 checkpoint、脚本和日志做完评测并写好产物；"
+                        "不要重新训练。")
+            log(f"  {label}: 后台命令未结束且无产物，补一次收尾（不重训）")
+            continue
+        if attempt >= retries:
+            break
     if salvage is not None:
         salvage.setdefault("status", "partial")
         salvage["_contract_warning"] = feedback
@@ -1826,6 +1843,7 @@ def same_scale_anchor(state: dict, metrics: dict | None) -> tuple[float | None, 
 
 def step5_record(state: dict, hypo: dict, result: dict, sched: dict) -> None:
     """记录猜想-实验对，更新 best，做 checkpoint GC。"""
+    sched = sched or {}
     nid = hypo["_nid"]
     metrics = result.get("metrics_dev")
     score = score_of(metrics)
@@ -2251,7 +2269,7 @@ def main() -> int:
             result = {"status": "failed", "metrics_dev": None,
                       "what_actually_happened": "Step3 Experiment 未产出合法 experiment.md"
                                                 "（见 experiment.stream.jsonl）"}
-        step5_record(state, chosen, sched, result)
+        step5_record(state, chosen, result, sched)
         state = load_state()
 
     finalize(state)
