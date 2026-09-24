@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -132,6 +133,8 @@ MEASURE_GAP = int(os.environ.get("RESEARCH_MEASURE_GAP", "2"))
 
 _DEADLINE = None          # 由 main() 按 timer.sh 设定
 _FINALIZED = threading.Event()
+_LAST_GOOD_STATE = None   # 独立快照，不能随调用方修改 state 一起变化
+_STATE_BACKUP_PROTECTED = False  # 未读到内容的备份不能用降级状态覆盖
 
 # ---------------------------------------------------------------- 1. 基础设施
 def log(msg: str) -> None:
@@ -142,10 +145,20 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def read_json(p: Path):
+def read_json(p: Path, *, raise_io_errors: bool = False):
+    """可选产物缺失不报警；损坏或不可读必须留下诊断，调用方仍可降级继续。"""
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except (ValueError, RecursionError) as exc:
+        # ValueError 也覆盖 JSONDecodeError、UnicodeError 和超长整数的解析限制。
+        log(f"WARN 读取 JSON 失败 {p}: {exc}")
+        return None
+    except OSError as exc:
+        log(f"WARN 读取 JSON 失败 {p}: {exc}")
+        if raise_io_errors:
+            raise
         return None
 
 
@@ -270,25 +283,130 @@ def default_state() -> dict:
             "measure_anchor": -1}
 
 
+def state_snapshot_valid(s) -> bool:
+    """只校验快照的基础容器；旧格式缺键仍允许由 default_state 补齐。"""
+    return (isinstance(s, dict)
+            and isinstance(s.get("best", {}), dict)
+            and isinstance(s.get("nodes", []), list))
+
+
 def load_state() -> dict:
-    """读盘上的 state。缺文件或不是对象时用默认值；是旧格式或缺键时只补缺的键，
-    不覆盖已有字段——主循环和 finalize 都直接取 nodes/best，缺了就是 KeyError，
-    顶层 except 收尾时还会再炸一次，final_model 就写不出来。"""
-    s = read_json(STATE_F)
+    """坏状态留存原件，优先恢复内存/磁盘快照；旧格式只补缺键，不清空已有 best。"""
+    global _LAST_GOOD_STATE, _STATE_BACKUP_PROTECTED
+    primary_unreadable = False
+    try:
+        s = read_json(STATE_F, raise_io_errors=True)
+    except OSError:
+        s = None
+        primary_unreadable = True
+    valid_primary = state_snapshot_valid(s)
+    pending_state = s if valid_primary and s.get("_recovery_backup_pending") else None
+    if pending_state is not None:
+        # 保护标记必须跨进程保留，不能把尚未找回历史 best 的临时进度当成可信快照。
+        _STATE_BACKUP_PROTECTED = True
+        valid_primary = False
+    recovered = False
+    bad_primary = False
+    if not valid_primary:
+        if not primary_unreadable and pending_state is None:
+            evidence = STATE_F.with_name(f"{STATE_F.name}.corrupt-{uuid.uuid4().hex}")
+            try:
+                STATE_F.replace(evidence)
+                bad_primary = True
+                log(f"WARN state JSON 或基础结构损坏，原件已保留: {evidence}")
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                bad_primary = True
+                log(f"WARN 无法留存 state 原件 {STATE_F}: {exc}")
+        if pending_state is None and state_snapshot_valid(_LAST_GOOD_STATE):
+            s = copy.deepcopy(_LAST_GOOD_STATE)
+            recovered = True
+            log("WARN 从最近可用的内存快照恢复 state，继续运行")
+        else:
+            try:
+                s = read_json(STATE_F.with_suffix(".json.bak"), raise_io_errors=True)
+            except OSError:
+                s = None
+                _STATE_BACKUP_PROTECTED = True
+                log("WARN 备份暂不可读，保留 state.json.bak；降级保存也不会覆盖它")
+            if state_snapshot_valid(s) and not s.get("_recovery_backup_pending"):
+                recovered = True
+                _STATE_BACKUP_PROTECTED = False
+                log("WARN 从 state.json.bak 恢复 state，继续运行")
+        if not recovered:
+            s = copy.deepcopy(pending_state) if pending_state is not None else {}
+            if bad_primary or primary_unreadable or _STATE_BACKUP_PROTECTED:
+                log("WARN 无可用 state 快照：暂用默认状态，历史 best 不能完整恢复")
+        elif pending_state is not None:
+            # 备份恢复会回到最后可信状态；隔离期间的进度另存，不静默丢弃/覆盖。
+            evidence = STATE_F.with_name(f"{STATE_F.name}.recovery-{uuid.uuid4().hex}")
+            try:
+                write_json(evidence, pending_state)
+                log(f"WARN 已恢复可信快照；降级期间临时进度另存: {evidence}")
+            except OSError as exc:
+                log(f"WARN 临时进度归档失败，暂缓恢复写回: {exc}")
+                s = pending_state
+                recovered = False
+                _STATE_BACKUP_PROTECTED = True
     base = default_state()
-    if not isinstance(s, dict):
-        return base
     for k, v in base.items():
         s.setdefault(k, v)
     if not isinstance(s.get("nodes"), list):
         s["nodes"] = []
     if not isinstance(s.get("best"), dict):
         s["best"] = {"node": None, "score": None, "model": None}
+    if _STATE_BACKUP_PROTECTED:
+        s["_recovery_backup_pending"] = True
+    else:
+        s.pop("_recovery_backup_pending", None)
+    if recovered or bad_primary or "seq" not in s:
+        # 快照可能落后于节点目录；不复用旧编号，以免续跑覆盖已有轨迹。
+        seq = s.get("seq", 0)
+        if type(seq) is not int or seq < 0:
+            seq = 0
+        pending_seq = (pending_state or {}).get("seq", 0)
+        if type(pending_seq) is int:
+            seq = max(seq, pending_seq)
+        names = [str(n.get("id", "")) for n in s["nodes"] if isinstance(n, dict)]
+        try:
+            names.extend(p.name for p in NODES.iterdir())
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            log(f"WARN 无法扫描历史节点编号 {NODES}: {exc}")
+        for name in names:
+            match = re.match(r"^n(\d+)-", name)
+            if match:
+                seq = max(seq, int(match.group(1)))
+        s["seq"] = seq
+    if (valid_primary or recovered) and not _STATE_BACKUP_PROTECTED:
+        _LAST_GOOD_STATE = copy.deepcopy(s)
+    # 没恢复成功就不提前把默认值落盘；下次读仍有机会恢复暂时不可读的备份。
+    if recovered and not primary_unreadable:
+        try:
+            save_state(s)
+        except OSError as exc:
+            log(f"WARN 恢复的 state 暂留内存，写回 {STATE_F} 失败: {exc}")
     return s
 
 
 def save_state(s: dict) -> None:
+    """主文件保存成功后更新独立快照；备份失败不打断已成功的主保存。"""
+    global _LAST_GOOD_STATE, _STATE_BACKUP_PROTECTED
+    if _STATE_BACKUP_PROTECTED or s.get("_recovery_backup_pending"):
+        _STATE_BACKUP_PROTECTED = True
+        pending = copy.deepcopy(s)
+        pending["_recovery_backup_pending"] = True
+        write_json(STATE_F, pending)
+        log("WARN state 主文件已保存；保留此前未能读取的 state.json.bak，不覆盖")
+        return
     write_json(STATE_F, s)
+    _LAST_GOOD_STATE = copy.deepcopy(s)
+    try:
+        write_json(STATE_F.with_suffix(".json.bak"), s)
+    except OSError as exc:
+        log(f"WARN state 主文件已保存，但备份写入失败: {exc}")
 
 
 def node_dir(nid: str) -> Path:
@@ -507,6 +625,32 @@ def cli_cmd(node_d: Path, phase: str, deny_tools: list[str] | None,
     return cmd, {"CLAUDE_CONFIG_DIR": str(node_d / ".cc")}
 
 
+def json_object_prefix(text: str) -> dict:
+    """损坏 JSON 只取错误位置之前完整的顶层字段，不误认嵌套对象里的 type。"""
+    fields = {}
+    rest = text.lstrip()
+    if not rest.startswith("{"):
+        return fields
+    rest = rest[1:].lstrip()
+    decoder = json.JSONDecoder()
+    while rest and not rest.startswith("}"):
+        try:
+            key, end = decoder.raw_decode(rest)
+            rest = rest[end:].lstrip()
+            if not isinstance(key, str) or not rest.startswith(":"):
+                break
+            rest = rest[1:].lstrip()
+            value, end = decoder.raw_decode(rest)
+        except (ValueError, RecursionError):
+            break
+        fields[key] = value
+        rest = rest[end:].lstrip()
+        if not rest.startswith(","):
+            break
+        rest = rest[1:].lstrip()
+    return fields
+
+
 def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: str,
             deny_tools: list[str] | None = None,
             with_agents: bool = False, timeout_s: int | None = None,
@@ -555,19 +699,37 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
                 sf.write(line)
                 n_ev += 1
                 # 只认像"事件级错误"的行；agent 自己命令输出里出现同样字样不算
-                if ('"type":"error"' in line
-                        or "overloaded_error" in line
+                if ("overloaded_error" in line
                         or ("all nodes exhausted" in line and '"error"' in line)):
                     saw_api_err = True
                 # CLI 把阻塞命令自动丢进后台时，回合会在命令结束前就 end_turn
                 if "Command running in background with ID:" in line:
                     saw_bg = True
                 # claude: {"type":"result",...}；codex: {"type":"turn.completed"|"turn.failed",...}
-                if '"type":"result"' in line or '"type":"turn.' in line or '"type":"error"' in line:
+                if line.lstrip().startswith("{"):
                     try:
-                        last_result = json.loads(line)
-                    except Exception:
-                        pass
+                        event = json.loads(line)
+                    except (ValueError, RecursionError) as exc:
+                        log(f"WARN CLI JSON 解析失败 {stream}:{n_ev}: {exc}"
+                            "；原始行已保留，继续读流")
+                        # 损坏的失败终态也要进入既有重试路径；普通完成事件不能误判成 API 错。
+                        partial = json_object_prefix(line)
+                        if partial.get("type") in ("error", "turn.failed") or (
+                                partial.get("type") == "result" and partial.get("is_error")
+                                and (partial.get("api_error_status")
+                                     or "API Error" in str(partial.get("result", "")))):
+                            saw_api_err = True
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    event_type = event.get("type")
+                    if isinstance(event_type, str) and (
+                            event_type in ("result", "error") or event_type.startswith("turn.")):
+                        last_result = event
+                        if event_type in ("error", "turn.failed") or (
+                                event.get("is_error") and (event.get("api_error_status")
+                                or "API Error" in str(event.get("result", "")))):
+                            saw_api_err = True
             rc = proc.wait()
         finally:
             if killer is not None:
@@ -580,6 +742,9 @@ def run_cli(prompt: str, node_d: Path, label: str, timeout_min: float, phase: st
         if last_result.get("type") in ("turn.failed", "error"):
             err_kind = "api"          # codex 侧的 turn 失败基本都是网关/模型侧问题
         usage = last_result.get("usage") or {}
+        if not isinstance(usage, dict):
+            log(f"WARN CLI 终态 usage 不是对象，忽略用量统计: {stream}")
+            usage = {}
         if usage.get("input_tokens") is not None and not cost:
             cost = (f"in {usage.get('input_tokens')}/out {usage.get('output_tokens')} tok")
         if last_result.get("is_error") and (last_result.get("api_error_status")
@@ -2168,12 +2333,18 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _on_term)
     signal.signal(signal.SIGINT, _on_term)
 
-    total_h = timer_remaining_h()
+    total_h = max(0.0, timer_remaining_h())
     _DEADLINE = time.time() + total_h * 3600
     reserve_h = total_h * RESERVE_FRAC
     bootstrap()
     state = load_state()
     log(f"总预算 {total_h:.2f}h（收尾保留 {reserve_h:.2f}h）cli={CLI} model={CLI_MODEL} dry_run={DRY}")
+
+    if total_h <= 0:
+        log("总预算已到期，不启动新节点，用当前状态正常收尾")
+        adopt_golden_into_state(state)
+        finalize(state)
+        return 0
 
     if not (RES / "golden_init.json").is_file():
         # step0_golden_init 现在只在时间上让步：缺协议/缺基线/缺文献/配方不全都会降级
