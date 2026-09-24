@@ -1059,6 +1059,9 @@ def golden_budget_h(total_h: float) -> float:
     时封顶在 6h，结余留给循环。封顶只缩小基数，Init 与 Run 的内部分配比例不变。
     """
     return min(total_h * GOLDEN_RUN_FRAC, GOLDEN_CAP_H)
+
+
+def step0_golden_init(state: dict, budget_min: int) -> bool:
     """并行建立协议、基线表征和外部知识先验，再由编排器合成 Golden Init。
 
     三个 specialist 写互不重叠的文件。文献节点有独立硬超时，不会因为 baseline
