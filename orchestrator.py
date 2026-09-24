@@ -123,9 +123,10 @@ GOLDEN_CAP_H = float(os.environ.get("RESEARCH_GOLDEN_CAP_H", "6"))
 # Golden Init 的失败分桶是粗桶（推理错/格式错/截断/抽取失败/复读），不足以支撑
 # "并行候选各守一个坐标"。默认在第一轮猜想之前先做一次 Measurement 把分面铺开。
 MEASURE_FIRST = os.environ.get("RESEARCH_MEASURE_FIRST", "1") == "1"
-# 度量升级要重跑尺子评测，不便宜。全程最多做 MAX_MEASURE 次；除了 judge 明确把问题
-# 归因到度量侧（measure_pending）以外，自动触发还要求距上次度量至少又跑了
-# MEASURE_GAP 个实验，否则每轮都会重跑一次把预算吃光。
+# 度量升级不便宜，而且单次拿到的是剩余全部墙钟。全程最多做 MAX_MEASURE 次。
+# 自动触发（连续猜想被否、开局那一次）还要求距上次度量又攒够 MEASURE_GAP 个实验；
+# 主循环把 measure_anchor 置成 -1 表示「不等间隔，下一轮立刻做」。
+# 没有这个闸，连续被否时会把 MAX_MEASURE 次度量一次接一次打满，预算进不了实验。
 MAX_MEASURE = int(os.environ.get("RESEARCH_MAX_MEASURE", "4"))
 MEASURE_GAP = int(os.environ.get("RESEARCH_MEASURE_GAP", "2"))
 
@@ -270,8 +271,20 @@ def default_state() -> dict:
 
 
 def load_state() -> dict:
+    """读盘上的 state。缺文件或不是对象时用默认值；是旧格式或缺键时只补缺的键，
+    不覆盖已有字段——主循环和 finalize 都直接取 nodes/best，缺了就是 KeyError，
+    顶层 except 收尾时还会再炸一次，final_model 就写不出来。"""
     s = read_json(STATE_F)
-    return s if isinstance(s, dict) else default_state()
+    base = default_state()
+    if not isinstance(s, dict):
+        return base
+    for k, v in base.items():
+        s.setdefault(k, v)
+    if not isinstance(s.get("nodes"), list):
+        s["nodes"] = []
+    if not isinstance(s.get("best"), dict):
+        s["best"] = {"node": None, "score": None, "model": None}
+    return s
 
 
 def save_state(s: dict) -> None:
@@ -1434,8 +1447,9 @@ def should_trigger_measurement(state: dict) -> tuple[bool, str]:
     
     原则：
     1. 达到全局上限 MAX_MEASURE 则不再触发；
-    2. 若针对当前的实验输出/基线状态尚未做过 Measurement，触发深入诊断；
-    3. 若针对同一份评测结果已经做过诊断，不再重复触发，防止死循环。
+    2. 同一批实验结果只诊断一次（实验数没有超过上次的 measure_anchor）；
+    3. measure_anchor 为 -1 时不受间隔限制（开局 MEASURE_FIRST，或连续被否后
+       主循环显式要求立刻做）；其余情况要再攒够 MEASURE_GAP 个实验才做下一次。
     """
     measures = [n for n in state.get("nodes", []) if n.get("kind") == "measure"]
     if len(measures) >= MAX_MEASURE:
@@ -1443,8 +1457,13 @@ def should_trigger_measurement(state: dict) -> tuple[bool, str]:
     exps = [n for n in state.get("nodes", []) if n.get("kind") == "exp"]
     current_exp_count = len(exps)
     last_anchor = state.get("measure_anchor", -1)
-    if current_exp_count <= last_anchor:
+    if not isinstance(last_anchor, int):
+        last_anchor = -1
+    if last_anchor >= 0 and current_exp_count <= last_anchor:
         return False, "当前实验产物已做过深度诊断，跳过避免重复"
+    if last_anchor >= 0 and current_exp_count - last_anchor < MEASURE_GAP:
+        return False, (f"距上次度量只新增 {current_exp_count - last_anchor} 个实验，"
+                       f"未满 MEASURE_GAP={MEASURE_GAP}，跳过")
     return True, f"连续猜想全被否决（第 {state.get('consec_rejects', 0)} 轮），进入行为诊断升级"
 
 
@@ -1689,9 +1708,12 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
         c["layer"] = "strategy" if "strategy" in layers_of else "exec"
         c["title"] = hypo_title_from_body(c.get("body") or "", target_combo_key)
 
-        # —— 可行性：估时装不下剩余墙钟就判废
+        # —— 可行性：估时装不下剩余墙钟就判废。frontmatter 里这个值经常带单位
+        # （"1.5h"、"约 2 小时"），裸 float() 会 ValueError，顶层 except 直接收尾。
         cap = budget_cap_h
-        est = float(c.get("cost_estimate_h") or 0)
+        est = fm_float(c, "cost_estimate_h")
+        if est is None:
+            est = 0.0
         if est > cap:
             drop(c, f"成本估计 {est}h 超过剩余墙钟 {cap:.2f}h")
             continue
@@ -1866,7 +1888,7 @@ def step5_record(state: dict, hypo: dict, result: dict, sched: dict) -> None:
     preflight_passed = result.get("preflight_passed", True)
 
     adopted = bool(score is not None and delta is not None
-                   and delta >= IMPROVE_EPS and delta > thr and result.get("status") == "ok"
+                   and delta >= IMPROVE_EPS and delta >= thr and result.get("status") == "ok"
                    and Path(str(result.get("model_path", ""))).is_dir())
     if adopted:
         # 不带 ruler_metrics：新 best 自己的分数就在统一尺子上，旧主干的尺子锚点已过期
@@ -1928,9 +1950,10 @@ def step5_record(state: dict, hypo: dict, result: dict, sched: dict) -> None:
 
 
 def gc_checkpoints(state: dict) -> None:
-    """4B bf16 一份 ~8GB。只保留 best 和最近 KEEP_CKPT 个节点的权重。"""
+    """4B bf16 一份 ~8GB。只保留 best 和最近 KEEP_CKPT 个节点的权重。
+    golden_run 也是一份完整权重：它没成为主干时同样回收，否则一份 ~8GB 会留到 run 结束。"""
     keep = {str(state["best"].get("model") or "")}
-    exp = [n["id"] for n in state["nodes"] if n.get("kind") == "exp"]
+    exp = [n["id"] for n in state["nodes"] if n.get("kind") in ("exp", "golden_run")]
     for nid in exp[-KEEP_CKPT:]:
         keep.add(str(NODES / nid / "model"))
     freed = 0
@@ -2275,7 +2298,9 @@ def main() -> int:
         save_state(state)
 
         # Step3: 端到端实验落地（方案规划 + 运行前代码与配置自查 + 占卡训练与统一评测）
-        est_h = float(chosen.get("cost_estimate_h") or 1.0)
+        est_h = fm_float(chosen, "cost_estimate_h")
+        if est_h is None:
+            est_h = 1.0
         cost_h = min(est_h, chosen["_budget_cap_h"],
                      max(0.4, remaining_h() - reserve_h - 0.3))
 

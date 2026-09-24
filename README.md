@@ -199,6 +199,7 @@ checkpoint 只保留 best 和最近 `KEEP_CKPT=2` 个实验节点的权重。
 | `RESEARCH_IMPROVE_EPS` | 0.01 | 采纳所需的最小提升 |
 | `RESEARCH_MEASURE_FIRST` | 1 | 首轮猜想前先做一次度量 |
 | `RESEARCH_MAX_MEASURE` | 4 | 全程度量次数上限 |
+| `RESEARCH_MEASURE_GAP` | 2 | 自动度量之间至少新增的实验数；`measure_anchor=-1` 时不等 |
 | `RESEARCH_RULER_N` | 300 | 固定子集尺子的默认样本数 |
 | `RESEARCH_RULER_MIN_N` | 200 | 子集尺子的样本数下限 |
 | `RESEARCH_OFFICIAL_CHECK_LIMIT` | 150 | baseline 窗口装不下全量时的退路抽样数 |
@@ -218,8 +219,8 @@ checkpoint 只保留 best 和最近 `KEEP_CKPT=2` 个实验节点的权重。
 | `RESEARCH_API_BACKOFF_S` | 90 | 网关重试间隔（秒） |
 | `RESEARCH_API_GIVEUP` | 6 | 累计网关失败多少次后收尾 |
 
-`RESEARCH_MIN_GROUNDED`、`RESEARCH_MIN_MECHANISTIC`、`RESEARCH_PLATEAU_K`、
-`RESEARCH_MEASURE_GAP` 仍定义在 `orchestrator.py` 里，但当前没有被读取。
+`RESEARCH_MIN_GROUNDED`、`RESEARCH_MIN_MECHANISTIC`、`RESEARCH_PLATEAU_K`
+仍定义在 `orchestrator.py` 里，但当前没有被读取。
 
 ## 空跑
 
