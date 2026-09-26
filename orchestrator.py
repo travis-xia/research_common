@@ -6,9 +6,9 @@
 
 流程（对齐 流程记录.md）：
     Step0 Golden Init（三路并行 specialist + 汇总 init agent 做初步决策）
-      └─► loop: Step1 猜想×N(并行，坐标互斥/视角互异/步长下发) -> 硬规则前筛 -> Judge 两两对比
+      └─► loop: Step1 单节点批量提出 N 条猜想 -> Judge 直接读取批量文件并选一条
+                -> 选中猜想硬规则校验 -> Step3 Experiment 端到端实验落地
                 -> (若全否则触发 Step2 Measurement 升级诊断并回流重新生成猜想)
-                -> Step3 Experiment 端到端实验落地（规划方案+运行前代码自查+占卡训练与评测）
                 -> Step5 记录 -> (平台期重新点火 / 常态探索 / 收尾保护)
     finalize: best -> final_model
 
@@ -66,6 +66,7 @@ PROTOCOL_SECTIONS = ["## 1. 评测执行指令与参数", "## 2. 输入提示词
                      "## 3. 停机符与输出长度限制", "## 4. 答案抽取与判定逻辑"]
 
 # 调度旋钮（都可用环境变量覆盖，便于做消融）
+# 每轮由一个 Step1 agent 一次性提出的最少猜想数。
 N_HYPO = int(os.environ.get("RESEARCH_N_HYPO", "3"))
 MIN_GROUNDED = float(os.environ.get("RESEARCH_MIN_GROUNDED", "4"))
 MIN_MECHANISTIC = float(os.environ.get("RESEARCH_MIN_MECHANISTIC", "3"))
@@ -828,6 +829,34 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
         write_json(node_d / "model" / "config.json", {"architectures": ["Qwen3ForCausalLM"]})
         (node_d / "experiment.md").write_text(_md(fm, body), encoding="utf-8")
         return 0
+    if label == "hypotheses":
+        n_hypo = max(3, int(extra.get("N_HYPO", N_HYPO)))
+        candidates = []
+        pools = [
+            {"domain": "Inference", "module": "Decoding"},
+            {"domain": "Training", "module": "Data"},
+            {"domain": "Training", "module": "Method"},
+            {"domain": "Inference", "module": "Hyperparams"},
+            {"domain": "Training", "module": "Hyperparams"},
+        ]
+        for idx in range(n_hypo):
+            target = pools[idx % len(pools)]
+            candidates.append(
+                f"## Candidate {idx}\n### Metadata\n"
+                f"- **targets**: `domain: {target['domain']}`, `module: {target['module']}`\n"
+                "- **abstain**: false\n- **cost_estimate_h**: 0.2\n\n"
+                "### 1. 现象观察与支撑证据\n- dry：最新评测存在对应错误桶。\n\n"
+                f"### 2. 机制假说 (Hypothesis)\n- dry：干预 {target['domain']}.{target['module']} 可改善该错误桶。\n\n"
+                "### 3. 干预变量与受控设计\n- **核心操作变量 (Intervention)**: dry。\n"
+                "- **严格受控变量 (Controls)**: 其他配置不变。\n\n"
+                "### 4. 证伪条件与预期指标\n- **证伪条件 (Falsified if)**: 得分未提升。\n"
+                "- **预期收益**: dry。\n")
+        fm = {"status": "ok", "n_hypotheses": n_hypo}
+        (node_d / "hypotheses.md").write_text(
+            _md(fm, "# 批量科学假说与干预设计\n\n" + "\n\n".join(candidates)),
+            encoding="utf-8")
+        return 0
+
     if label.startswith("hypo"):
         idx = int(label.split("-")[-1])
         allowed = str(extra.get("ALLOWED_LAYERS", "exec/strategy"))
@@ -862,6 +891,24 @@ def dry_stub(label: str, node_d: Path, prompt: str, extra: dict) -> int:
                 "## 2. 方案对比 (Head-to-Head Comparison)\n- 选 Candidate 0。\n\n"
                 "## 3. 最终裁决\n- 选定 Candidate 0。\n")
         (node_d / "judge.md").write_text(_md(fm, body), encoding="utf-8")
+        selected = extra.get("SELECTED_CONTRACT_PATH")
+        if selected:
+            selected_path = Path(str(selected))
+            selected_path.parent.mkdir(parents=True, exist_ok=True)
+            selected_fm = {
+                "status": "ok",
+                "targets": [{"domain": "Inference", "module": "Decoding"}],
+                "abstain": False,
+                "cost_estimate_h": 0.2,
+            }
+            selected_body = (
+                "# 科学假说与干预设计\n\n"
+                "## 1. 现象观察与支撑证据\n- dry：最新评测存在对应错误桶。\n\n"
+                "## 2. 机制假说\n- dry：解码干预可改善该错误桶。\n\n"
+                "## 3. 干预变量与受控设计\n- 干预: dry；受控: 其他配置不变。\n\n"
+                "## 4. 证伪条件与预期指标\n- 证伪: 统一尺子得分未提升。\n"
+            )
+            selected_path.write_text(_md(selected_fm, selected_body), encoding="utf-8")
         return 0
 
     if label == "archive":
@@ -1000,6 +1047,10 @@ def run_node(step_file: str, node_d: Path, contract: Path, label: str, phase: st
             set_phase(phase)
             if contract.exists():
                 contract.unlink()
+            for cleanup_path in extra.get("_cleanup_paths", []):
+                cleanup = Path(str(cleanup_path))
+                if cleanup.is_file():
+                    cleanup.unlink()
             extra["RETRY_FEEDBACK"] = feedback
             prompt = build_prompt(step_file, node_d, contract, extra, state, attempt_timeout,
                                   phase=phase)
@@ -1697,62 +1748,52 @@ def allowed_layers(sched: dict) -> list[str]:
     return list(sched.get("layers") or ["strategy", "exec"])
 
 
-def assign_plans(state: dict, sched: dict) -> list[dict]:
-    """给每个并行候选分配槽位。常态下全开 strategy/exec，不控制步伐大小。"""
-    plans: list[dict] = []
-    layers = allowed_layers(sched)
-    n_cand = int(sched.get("n_cand") or N_HYPO)
-    for i in range(n_cand):
-        plans.append({"idx": i, "layers": layers})
-    return plans
+def step1_hypotheses(state: dict, sched: dict, budget_min: int,
+                     repair_hint: str = "") -> dict | None:
+    """单个 Step1 agent 一次性提出多条猜想，写入一个批量契约文件。
 
-
-def step1_hypotheses(state: dict, sched: dict, plans: list[dict],
-                     budget_min: int, repair_hint: str = "") -> list[dict]:
-    """N 个猜想节点并行。纯 API 阶段，不占卡；守卫会拦下任何占卡命令。"""
-    log(f"---- Step1 并行猜想 ×{len(plans)}（mode={sched['mode']}）")
-    for p in plans:
-        log(f"     cand-{p['idx']}: layers={p['layers']}")
-    for p in plans:
-        p["nid"] = new_nid(state, "hyp") + f"-c{p['idx']}"
-        p["dir"] = node_dir(p["nid"])
-
-    act_space_json = inject_json(action_space())
-
-    def one(p: dict):
-        best = state.get("best") or {}
-        extra = {
-            "CAND_INDEX": p["idx"] + 1, "N_CAND": len(plans), "N_OTHER": len(plans) - 1,
-            "MODE": sched["mode"], "MODE_HINT": sched["hint"],
-            "BEST_MODEL_PATH": best.get("model") or MODEL,
-            "ACTION_SPACE": act_space_json,
-            "ALLOWED_LAYERS": "/".join(p["layers"]),
-            "COST_CAP_H": sched["cost_cap_h"],
-            "REPAIR_HINT": repair_hint or "（无）",
-            "MEASUREMENT_DIAGNOSIS": latest_measurement_text(state),
-            # Step5 归档知识库：每轮实验后追加卡片，猜想节点开卷读，避免重复已证伪路线。
-            # 首轮文件还不存在，prompt 里已说明"初始为空"属正常。
-            "BANK_PATH": BANK_PATH,
-        }
-        return run_node("step1_hypothesis.md", p["dir"], p["dir"] / "hypothesis.md",
-                        f"hypo-{p['idx']}", "hypothesis",
-                        ["## 1. 现象观察与支撑证据", "## 2. 机制假说", "## 3. 干预变量与受控设计",
-                         "## 4. 证伪条件与预期指标"], state,
-                        extra=extra, timeout_min=budget_min,
-                        deny_tools=["WebSearch", "WebFetch"], retries=1, text_contract=True)
-
-    with ThreadPoolExecutor(max_workers=max(1, len(plans))) as ex:
-        results = list(ex.map(one, plans))
-    out = []
-    for p, obj in zip(plans, results):
-        if not obj:
-            continue
-        obj["_id"] = f"cand-{p['idx']}"
-        obj["_nid"] = p["nid"]
-        obj["_dir"] = str(p["dir"])
-        obj["_plan"] = p
-        out.append(obj)
-    return out
+    候选之间的比较和胜出方案的落盘都交给 Judge；编排器不再并行启动多个
+    Step1 agent，也不在 Judge 之前拆分 hypotheses.md。
+    """
+    nid = new_nid(state, "hypotheses")
+    d = node_dir(nid)
+    n_hypo = max(3, int(sched.get("n_cand") or N_HYPO))
+    log(f"---- Step1 单节点批量猜想 ×{n_hypo}（mode={sched['mode']}）")
+    best = state.get("best") or {}
+    extra = {
+        "N_HYPO": n_hypo,
+        "MODE": sched["mode"],
+        "MODE_HINT": sched["hint"],
+        "BEST_MODEL_PATH": best.get("model") or MODEL,
+        "ACTION_SPACE": inject_json(action_space()),
+        "ALLOWED_LAYERS": "/".join(allowed_layers(sched)),
+        "COST_CAP_H": sched["cost_cap_h"],
+        "REPAIR_HINT": repair_hint or "（无）",
+        "MEASUREMENT_DIAGNOSIS": latest_measurement_text(state),
+        "BANK_PATH": BANK_PATH,
+    }
+    required = [f"## Candidate {i}" for i in range(n_hypo)]
+    obj = run_node(
+        "step1_hypothesis.md", d, d / "hypotheses.md", "hypotheses", "hypothesis",
+        required, state, extra=extra, timeout_min=budget_min,
+        deny_tools=["WebSearch", "WebFetch"], retries=1, text_contract=True)
+    if not obj:
+        return None
+    candidate_ids = re.findall(r"(?m)^## Candidate\s+(\d+)\b", str(obj.get("text") or ""))
+    if len(set(candidate_ids)) < n_hypo:
+        log(f"  Step1 批量文件候选数不足：需要至少 {n_hypo} 条，实际 {len(set(candidate_ids))} 条")
+        return None
+    state["nodes"].append({
+        "id": nid, "kind": "hypotheses", "ts": now_iso(),
+        "n_hypotheses": n_hypo, "path": str(d / "hypotheses.md"),
+        "status": obj.get("status"),
+    })
+    save_state(state)
+    obj["_nid"] = nid
+    obj["_dir"] = str(d)
+    obj["_hypotheses_file"] = str(d / "hypotheses.md")
+    obj["_n_hypo"] = n_hypo
+    return obj
 
 
 def _nonempty(v) -> bool:
@@ -1891,47 +1932,112 @@ def prefilter_candidates(cands: list[dict], sched: dict, state: dict,
     return survivors, rejected
 
 
-def step1_judge(state: dict, cands: list[dict], sched: dict, budget_min: int):
-    """LLM judge 两两对比选一个 winner；硬规则已在 prefilter 筛过。
+def _load_selected_hypothesis(path: Path, sched: dict, state: dict) -> tuple[dict | None, str | None]:
+    """读取并校验 Judge 写出的单条胜出猜想，不拆解 Step1 批量文件。"""
+    if not path.is_file() or path.stat().st_size == 0:
+        return None, f"Judge 未写出胜出猜想文件 `{path}`。"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    required = [
+        "## 1. 现象观察与支撑证据",
+        "## 2. 机制假说",
+        "## 3. 干预变量与受控设计",
+        "## 4. 证伪条件与预期指标",
+    ]
+    missing = [h for h in required if h not in text]
+    if missing:
+        return None, f"胜出猜想缺少关键小节: {missing}"
+    meta, body = parse_markdown_with_frontmatter(text)
+    obj = {"status": meta.get("status", "ok"), "path": str(path),
+           "text": text, "body": body, **meta}
+    if obj.get("abstain"):
+        return None, "Judge 选出的猜想声明 abstain=true。"
+    raw_targets = obj.get("targets")
+    if not isinstance(raw_targets, list) or not raw_targets:
+        return None, "胜出猜想 frontmatter 缺少有效 targets 列表。"
+    valid_keys = []
+    layers = []
+    for target in raw_targets:
+        if not isinstance(target, dict):
+            return None, f"胜出猜想靶点格式非法: {target!r}"
+        ok, why = valid_target(target)
+        if not ok:
+            return None, f"胜出猜想靶点 {target.get('domain')}.{target.get('module')} 非法：{why}"
+        dom = action_space()["domains"].get(str(target.get("domain")), {})
+        mod = dom.get("modules", {}).get(str(target.get("module")), {})
+        layer = coord_layer(dom, mod)
+        if layer not in set(allowed_layers(sched)):
+            return None, f"胜出猜想靶点层级 `{layer}` 不在本轮允许层级 {allowed_layers(sched)}"
+        valid_keys.append(f"{target.get('domain')}.{target.get('module')}")
+        layers.append(layer)
+    est = fm_float(obj, "cost_estimate_h")
+    if est is None:
+        return None, "胜出猜想缺少合法 cost_estimate_h。"
+    if est > float(sched.get("cost_cap_h") or 0):
+        return None, f"胜出猜想成本 {est}h 超过剩余预算 {sched.get('cost_cap_h')}h。"
+    obj["target"] = raw_targets[0] if len(raw_targets) == 1 else {
+        "domain": "Multi", "module": "+".join(sorted(valid_keys))}
+    obj["_target_key"] = "+".join(sorted(valid_keys))
+    obj["layer"] = "strategy" if "strategy" in layers else "exec"
+    obj["title"] = hypo_title_from_body(body, obj["_target_key"])
+    obj["_id"] = f"selected-{obj['_target_key']}"
+    obj["_plan"] = {"layers": allowed_layers(sched)}
+    obj["_nid"] = path.parent.name
+    obj["_dir"] = str(path.parent)
+    obj["_selected_file"] = str(path)
+    obj["_budget_cap_h"] = float(sched.get("cost_cap_h") or 0)
+    return obj, None
 
-    新版契约（prompts/step1_judge.md）是 Markdown+frontmatter：`winner_index` 指向下面
-    注入的候选清单里的第几个（0-based，对应 Candidate 0/1/2…），全否时为 null 并给出
-    `insufficient_reason`（measurement=证据不足需度量升级 / quality=平庸可直接重试）。
-    返回 (chosen, why, insufficient_reason)。
-    """
+
+def step1_judge(state: dict, batch: dict, sched: dict, budget_min: int):
+    """Judge 直接读取 Step1 的批量猜想文件，并写出单条胜出猜想。"""
     nid = new_nid(state, "judge")
     d = node_dir(nid)
-    blocks = []
-    for i, c in enumerate(cands):
-        tgt_desc = c.get("_target_key") or "未定坐标"
-        body = str(c.get("body") or c.get("text") or "").strip()
-        blocks.append(
-            f"### Candidate {i}（_id={c['_id']}｜靶点坐标: {tgt_desc}"
-            f"｜预估 {c.get('cost_estimate_h')}h）\n\n{body}")
-    obj = run_node("step1_judge.md", d, d / "judge.md", "judge", "judge",
-                   ["## 1. 候选方案证据核验", "## 3. 最终裁决"], state,
-                   extra={"N_CAND": len(cands), "CANDIDATES": "\n\n".join(blocks),
-                          "CAND_IDS": ",".join(c["_id"] for c in cands),
-                          "COST_CAP_H": sched["cost_cap_h"],
-                          # judge 判重需要看归档知识库；首轮文件不存在，prompt 已说明"初始为空"
-                          "BANK_PATH": BANK_PATH},
-                   timeout_min=budget_min, deny_tools=["WebSearch", "WebFetch"],
-                   retries=1, text_contract=True)
+    hypotheses_file = Path(str(batch.get("_hypotheses_file") or ""))
+    selected_file = d / "selected_hypothesis.md"
+    if selected_file.exists():
+        selected_file.unlink()
+    n_hypo = int(batch.get("_n_hypo") or N_HYPO)
+    obj = run_node(
+        "step1_judge.md", d, d / "judge.md", "judge", "judge",
+        ["## 1. 候选方案证据核验", "## 3. 最终裁决"], state,
+        extra={
+            "N_HYPO": n_hypo,
+            "HYPOTHESES_FILE": str(hypotheses_file),
+            "SELECTED_CONTRACT_PATH": str(selected_file),
+            "_cleanup_paths": [str(selected_file)],
+            "ACTION_SPACE": inject_json(action_space()),
+            "ALLOWED_LAYERS": "/".join(allowed_layers(sched)),
+            "MODE": sched.get("mode"),
+            "MODE_HINT": sched.get("hint"),
+            "COST_CAP_H": sched["cost_cap_h"],
+            "BANK_PATH": BANK_PATH,
+        },
+        timeout_min=budget_min, deny_tools=["WebSearch", "WebFetch"],
+        retries=1, text_contract=True)
     reason_kind = (obj or {}).get("insufficient_reason")
     if isinstance(reason_kind, str) and reason_kind.strip().lower() in ("null", "none", ""):
         reason_kind = None
     win = fm_int(obj or {}, "winner_index")
     state["nodes"].append({"id": nid, "kind": "judge", "ts": now_iso(),
-                           "winner_index": win, "insufficient_reason": reason_kind})
+                           "winner_index": win, "insufficient_reason": reason_kind,
+                           "hypotheses_file": str(hypotheses_file),
+                           "selected_file": str(selected_file)})
     save_state(state)
     if not obj:
         return None, "judge 节点未产出合法契约", None
-    if win is None or not (0 <= win < len(cands)):
-        return (None,
-                f"judge 判本轮候选全部不达标（winner_index={(obj or {}).get('winner_index')!r}）",
-                reason_kind)
-    chosen = cands[win]
+    if win is None:
+        return None, f"judge 判本轮候选全部不达标（winner_index={obj.get('winner_index')!r}）", reason_kind
+    if not (0 <= win < n_hypo):
+        return None, f"judge winner_index={win} 超出候选范围 0..{n_hypo - 1}", "quality"
+    chosen, why = _load_selected_hypothesis(selected_file, sched, state)
+    if chosen is None:
+        return None, why or "Judge 胜出猜想契约非法", "quality"
+    experiment_nid = new_nid(state, "experiment")
+    experiment_dir = node_dir(experiment_nid)
     chosen["_review"] = {"winner_index": win, "winner_file": obj.get("winner_file")}
+    chosen["_batch_file"] = str(hypotheses_file)
+    chosen["_nid"] = experiment_nid
+    chosen["_dir"] = str(experiment_dir)
     return chosen, None, None
 
 
@@ -1953,9 +2059,10 @@ def step3_experiment(state: dict, hypo: dict, sched: dict, budget_min: int):
     产物是 Markdown+frontmatter（experiment.md），折成下游 result 形状后返回。"""
     d = Path(hypo["_dir"])
     log(f"---- Step3 端到端实验落地 {hypo['_nid']}（预算 {budget_min} 分钟）")
+    hypothesis_file = Path(str(hypo.get("_selected_file") or d / "hypothesis.md"))
     obj = run_node("step3_experiment.md", d, d / "experiment.md", "experiment", "experiment",
                    ["## 1. 实验方案与控制变量", "## 2. 运行前工程与配置自查 (Preflight)", "## 3. 评测指标与结果分析"], state,
-                   extra={"HYPOTHESIS_FILE": str(d / "hypothesis.md"),
+                   extra={"HYPOTHESIS_FILE": str(hypothesis_file),
                           "HYPOTHESIS": hypo_inject(hypo),
                           "COST_CAP_H": round(budget_min / 60.0, 2),
                           "BEST_MODEL_PATH": (state.get("best") or {}).get("model")},
@@ -2418,19 +2525,15 @@ def main() -> int:
                 save_state(state)
 
         hypo_min = wall_min()
-        plans = assign_plans(state, sched)
-        for p in plans:
-            p["regime"] = sched["mode"]
-        cands = step1_hypotheses(state, sched, plans, hypo_min, repair_hint)
+        batch = step1_hypotheses(state, sched, hypo_min, repair_hint)
         repair_hint = ""
         state = load_state()
-        cands, hard_rejects = prefilter_candidates(cands, sched, state, sched["cost_cap_h"])
-        if not cands:
+        if not batch:
             state["rejected_rounds"] = state.get("rejected_rounds", 0) + 1
             state["consec_rejects"] = state.get("consec_rejects", 0) + 1
-            why = "；".join(f"{r['id']}: {r['reason']}" for r in hard_rejects) or "全部节点无产物"
-            journal_append(f"## round {state['round']} 硬规则全否 [{now_iso()}]\n- {why}")
-            log(f"本轮所有候选被硬规则判废：{why}")
+            why = "Step1 批量猜想节点无合法产物"
+            journal_append(f"## round {state['round']} Step1 失败 [{now_iso()}]\n- {why}")
+            log(why)
             
             # 全否触发 Step2 Measurement 诊断升级
             should_measure, m_reason = should_trigger_measurement(state)
@@ -2444,7 +2547,7 @@ def main() -> int:
             save_state(state)
             continue
 
-        chosen, why, insufficient = step1_judge(state, cands, sched, wall_min())
+        chosen, why, insufficient = step1_judge(state, batch, sched, wall_min())
         state = load_state()
         if chosen is None:
             state["rejected_rounds"] = state.get("rejected_rounds", 0) + 1

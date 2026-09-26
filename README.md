@@ -45,9 +45,9 @@ Golden Run（n000-golden-run）
    ↓
 loop:
    [Step2 Measurement]  候选全被否决时触发，诊断后回流 Step1
-   Step1 猜想 × N       并行；只下发本轮允许的层级，靶点由节点自己选
-   硬规则前筛           编排器代码执行，不调 LLM
-   Step1 Judge          两两对比选一个；全否则回 Step2 再重猜
+   Step1 批量猜想       一个 agent 一次性提出至少 N 条短猜想
+   Step1 Judge          直接读取批量文件，选一个并写出 selected_hypothesis.md
+   胜出猜想校验         编排器只校验 Judge 选出的单条方案
    Step3 Experiment     单节点串行：规划 → 开工前自查 → 占卡训练与评测
    Step5 记录 + Archive 记账、更新 best，因果对追加进 experience_bank.md
    ↓
@@ -83,16 +83,14 @@ finalize: best → ./final_model
 
 ### 硬规则前筛
 
-`prefilter_candidates()` 不调 LLM，逐条判废：
+Step1 由一个 agent 一次性写出至少 `RESEARCH_N_HYPO` 条短猜想到
+`hypotheses.md`，Judge 直接读取这一个批量文件并比较候选。
 
-- 候选主动弃权
-- 靶点不在 `action_space.json` 里，或落在冻结坐标上
-- 靶点层级超出本轮允许的层级
-- 同一轮内两个候选选了完全相同的靶点组合
-- `cost_estimate_h` 超过剩余墙钟
-- 靶点组合里的每个坐标都已试过 ≥2 次且从未被采纳
+Judge 选中后另写一份 `selected_hypothesis.md`。编排器只对这份胜出猜想做
+硬校验：候选主动弃权、靶点不在 `action_space.json` 或落在冻结坐标、层级越权、
+`cost_estimate_h` 超过剩余墙钟，均不进入实验。编排器不再拆分或预筛整批候选。
 
-通过前筛的候选交给 Judge 两两对比，选出一个进入实验。
+通过校验的 `selected_hypothesis.md` 直接交给 Step3 Experiment。
 
 ### 采纳
 
@@ -128,8 +126,8 @@ Measurement 在两类情况下触发：开局 `MEASURE_FIRST=1` 时第一轮猜�
 | Literature | `step0_literature_review.md` | `research/literature.md` |
 | Synthesis | `step0_synthesis.md` | `research/golden_recipe.md`、`roadmap.json`、`golden_init.json` |
 | Golden Run | `step0_golden_run.md` | `research/golden_run.json`、`nodes/n000-golden-run/model/` |
-| Hypothesis | `step1_hypothesis.md` | `nodes/<nid>/hypothesis.md` |
-| Judge | `step1_judge.md` | `nodes/<nid>/judge.md` |
+| Hypotheses | `step1_hypothesis.md` | `nodes/<nid>/hypotheses.md` |
+| Judge | `step1_judge.md` | `nodes/<nid>/judge.md`、`selected_hypothesis.md` |
 | Measurement | `step2_measurement.md` | `nodes/<nid>/measurement.md` |
 | Experiment | `step3_experiment.md` | `nodes/<nid>/experiment.md`、`model/` |
 | Archive | `step5_archive.md` | `nodes/<nid>/archive_card.md`，追加 `experience_bank.md` |
@@ -175,7 +173,7 @@ checkpoint 只保留 best 和最近 `KEEP_CKPT=2` 个实验节点的权重。
 
 | 变量 | 默认 | 含义 |
 |---|---|---|
-| `RESEARCH_N_HYPO` | 3 | 每轮并行猜想数 |
+| `RESEARCH_N_HYPO` | 3 | 每轮由单个 Step1 agent 批量提出的最少猜想数 |
 | `RESEARCH_MAX_NODES` | 40 | 节点数上限 |
 | `RESEARCH_JOURNAL_TAIL` | 8 | 注入提示词的最近实验记录条数 |
 | `RESEARCH_TASK_TYPE` | post_train | 选择 `tasks/<type>/action_space.json` |
