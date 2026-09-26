@@ -556,9 +556,13 @@ def build_prompt(step_file: str, node_d: Path, contract: Path, extra: dict,
                         or "python evaluate.py --model-path {{MODEL}} ...").replace("{{MODEL}}", str(MODEL))
     protocol_sources = "、".join(bp.get("protocol_sources")
                                  or ["evaluate.py", "templates/", "Scorer 实现", "相关配置文件"])
+    # Golden Run 的实际墙钟/Bash 超时仍由 run_node、child_env 和全局守护控制，
+    # 但不把剩余分钟数暴露给 agent，避免它看到硬上限后主动缩短训练或评测。
+    # Baseline / synthesis 等其他节点继续收到真实 NODE_TIMEOUT_MIN。
+    visible_timeout = "" if step_file == "step0_golden_run.md" else round(timeout_min, 2)
     base = {
         "TASK_DIR": TASK_DIR, "NODE_DIR": node_d, "MODEL": MODEL,
-        "BENCHMARK": benchmark_name(), "NODE_TIMEOUT_MIN": round(timeout_min, 2),
+        "BENCHMARK": benchmark_name(), "NODE_TIMEOUT_MIN": visible_timeout,
         "REMAINING_H": round(remaining_h(), 2),
         # 子进程直接继承宿主环境变量（不设 GPU 租约，任何阶段都可以用自己的卡）
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
