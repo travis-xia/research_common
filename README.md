@@ -22,8 +22,9 @@ skills/                节点按需阅读的操作手册
 - `agents/codex_research/solve.sh` → Codex CLI，配 `gpt-*`
 - `agents/claude_research/solve.sh` → Claude Code CLI，配 `claude-*`
 
-`prompts/` 里 `step3_plan.md`、`step4_engineer1_run.md`、`step4_engineer2_preflight.md`
-已不再被调用，保留仅供参考。`assets/step_policy.json` 同样不再被读取。
+实验规划、运行前工程自查、训练与评测已合并到 `prompts/step3_experiment.md`；
+旧的 `step3_plan.md`、`step4_engineer1_run.md`、`step4_engineer2_preflight.md`
+已删除。`assets/step_policy.json` 同样不再被读取。
 
 ## 流程
 
@@ -231,3 +232,45 @@ NUM_HOURS=1 RESEARCH_DRY_RUN=1 RESEARCH_MAX_NODES=6 RESEARCH_MEASURE_FIRST=0 \
 
 不调 API、不占卡，秒级走完从 Golden Init 到 `finalize` 的整条链路，
 用来确认编排器自身没有运行期错误。
+
+## 运行时目录结构
+
+每次 run 会在外部 run 目录下创建 `work/task/` 作为 agent 的实际工作目录。
+例如：
+
+```text
+.../20260927-133901/
+├── work/
+│   ├── agent_solve.sh
+│   ├── check_cuda.py
+│   ├── system_monitor.sh
+│   └── task/
+├── out/
+│   ├── solve_out.txt
+│   ├── trace_server.py
+│   └── ...
+├── traces/
+└── ...
+```
+
+`work/task/research/` 保存本次研究的共享资料、源码快照和各节点产物：
+
+```text
+work/task/research/
+├── action_space.json
+├── benchmark_profile.json
+├── guard.py
+├── settings.json
+├── WORKFLOW_OVERVIEW.md
+├── golden_recipe.md
+├── roadmap.json
+├── guard.log
+├── harness_src/       # 本次 run 使用的 research_common 源码快照
+└── nodes/             # 各 specialist、synthesis、experiment 的节点目录
+```
+
+每个节点目录会保存该 agent 收到的 prompt、CLI 事件流、Markdown 产物以及训练或评测产生的附属文件。run 结束时，harness 只认：
+
+```text
+work/task/final_model/
+```
