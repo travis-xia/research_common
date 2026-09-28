@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -80,14 +81,204 @@ def deny(tool: str, reason: str) -> None:
     sys.exit(2)
 
 
+def _norm_path(raw: str) -> str:
+    path = raw.strip().strip("'\"").replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    while "//" in path:
+        path = path.replace("//", "/")
+    return path.rstrip()
+
+
+def _path_matches(candidate: str, protected: str) -> bool:
+    """按路径边界匹配，避免 evaluate.py 命中 my_evaluate.py.bak。"""
+    candidate = _norm_path(candidate)
+    protected = _norm_path(protected)
+    if not candidate or not protected:
+        return False
+    if protected.endswith("/"):
+        directory = protected.rstrip("/")
+        return candidate == directory or candidate.startswith(directory + "/")
+    return (
+        candidate == protected
+        or candidate.endswith("/" + protected)
+        or candidate.startswith(protected + "/")
+    )
+
+
 def hits_protected(raw: str) -> str | None:
-    norm = raw.replace("./", "")
     for p in PROTECTED:
-        if p in norm:
+        if _path_matches(raw, p):
             return p
     for p, phases in PHASE_WRITABLE.items():
-        if p in norm and phase() not in phases:
+        if _path_matches(raw, p) and phase() not in phases:
             return f"{p}（只在 {sorted(phases)} 阶段可写）"
+    return None
+
+
+def _split_clauses(command: str) -> list[str]:
+    """按 shell 控制符拆命令，但不拆引号里的文本。"""
+    clauses: list[str] = []
+    current: list[str] = []
+    in_single = in_double = False
+    escaped = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if escaped:
+            current.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and (in_single or in_double):
+            current.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+            current.append(ch)
+            i += 1
+            continue
+        if ch == '"' and not in_single:
+            in_double = not in_double
+            current.append(ch)
+            i += 1
+            continue
+        if not in_single and not in_double:
+            if ch in ";\n|":
+                clauses.append("".join(current))
+                current = []
+                i += 1
+                if ch in "&|" and i < len(command) and command[i] == ch:
+                    i += 1
+                continue
+            if ch == "&" and i + 1 < len(command) and command[i + 1] == "&":
+                clauses.append("".join(current))
+                current = []
+                i += 2
+                continue
+        current.append(ch)
+        i += 1
+    clauses.append("".join(current))
+    return clauses
+
+
+def _strip_fd_redirections(command: str) -> str:
+    """去掉明显只是 fd 复用或丢弃输出的重定向。"""
+    command = re.sub(r"(?<!\S)\d*>&\d+", " ", command)
+    command = re.sub(r"(?<!\S)\d*>\s*/dev/(?:null|stdout|stderr|tty)\b", " ", command)
+    return command
+
+
+def _redirection_targets(command: str) -> list[str]:
+    """只提取引号外真正的 > / >> / &> 文件目标。"""
+    targets: list[str] = []
+    in_single = in_double = False
+    escaped = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if escaped:
+            escaped = False
+            i += 1
+            continue
+        if in_single:
+            if ch == "'":
+                in_single = False
+            i += 1
+            continue
+        if in_double:
+            if ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_double = False
+            i += 1
+            continue
+        if ch == "'":
+            in_single = True
+            i += 1
+            continue
+        if ch == '"':
+            in_double = True
+            i += 1
+            continue
+        if command.startswith("&>", i):
+            i += 2
+        elif ch == ">":
+            # Python/文本里的 ->、=>、>=、>& 不是文件重定向。
+            if i and command[i - 1] in "-=":
+                i += 1
+                continue
+            if i + 1 < len(command) and command[i + 1] == "&":
+                i += 2
+                continue
+            i += 2 if i + 1 < len(command) and command[i + 1] == ">" else 1
+        else:
+            i += 1
+            continue
+        while i < len(command) and command[i].isspace():
+            i += 1
+        start = i
+        while i < len(command) and not command[i].isspace() and command[i] not in "|;&":
+            i += 1
+        if i > start:
+            target = command[start:i].strip("'\"")
+            if target not in {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}:
+                targets.append(target)
+    return targets
+
+
+def _write_targets(command: str) -> list[tuple[str, str]]:
+    """返回 (目标路径, 操作类型)，只返回可能改变文件的目标。"""
+    command = _strip_fd_redirections(command)
+    targets = [(target, "redir") for target in _redirection_targets(command)]
+
+    for clause in _split_clauses(command):
+        try:
+            tokens = shlex.split(clause)
+        except ValueError:
+            # shell 语法不完整时宁可放行，避免 guard 成为流水线单点故障。
+            continue
+        if not tokens:
+            continue
+
+        # 去掉前置环境变量赋值。
+        while tokens and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+            tokens.pop(0)
+        if not tokens:
+            continue
+
+        verb = tokens[0]
+        args = [token for token in tokens[1:] if not token.startswith("-")]
+        if verb == "tee":
+            targets.extend((arg, "tee") for arg in args)
+        elif verb == "cp" and args:
+            targets.append((args[-1], "cp"))
+        elif verb == "mv" and args:
+            # mv 的源和目标都需要检查：移动 protected 文件本身也不应放行。
+            targets.extend((arg, "mv") for arg in args)
+        elif verb == "rm" and args:
+            targets.extend((arg, "rm") for arg in args)
+        elif verb == "truncate" and args:
+            targets.extend((arg, "truncate") for arg in args if not arg.isdigit())
+        elif verb == "sed" and any(arg == "-i" or arg.startswith("-i") for arg in tokens[1:]):
+            # sed -i 's/old/new/' file：跳过选项和替换表达式，最后的文件是写目标。
+            non_options = [
+                arg for arg in tokens[1:]
+                if not arg.startswith("-") and not re.match(r"^s[^\w].+", arg)
+            ]
+            targets.extend((arg, "sed") for arg in non_options)
+    return targets
+
+
+def _destructive_target(target: str) -> str | None:
+    normalized = _norm_path(target)
+    if normalized == "research" or normalized.startswith("research/"):
+        return "research/"
+    for name in ("final_model", "best_model"):
+        if normalized == name or normalized.startswith(name + "/") or f"/{name}/" in normalized:
+            return name
     return None
 
 
@@ -105,16 +296,14 @@ def main() -> None:
 
     if tool == "Bash":
         cmd = str(ti.get("command", ""))
-        # 2>&1 / 1>&2 这类 fd 复用不是文件写入，先摘掉再判定（2026-09-08 用户决策：
-        # 曾把 `bash timer.sh 2>&1 | head`、`python evaluate.py --help 2>&1` 这类纯读
-        # 命令误判成"写受保护路径"，13/13 条 deny 都是这个形态）
-        cmd = re.sub(r"\s\d*>&\d*", " ", cmd)
-        if re.search(r"(>|>>|tee\s|sed\s+-i|truncate|cp\s|mv\s)", cmd):
-            hit = hits_protected(cmd)
+        for target, kind in _write_targets(cmd):
+            hit = hits_protected(target)
             if hit:
-                deny(tool, f"命令试图写入受保护路径 {hit}：{cmd[:200]}")
-        if DESTRUCTIVE.search(cmd):
-            deny(tool, f"禁止删除研究状态/模型目录：{cmd[:200]}")
+                deny(tool, f"命令试图写入受保护路径 {hit}（{kind} -> {target}）：{cmd[:200]}")
+            if kind in {"rm", "mv"}:
+                destructive = _destructive_target(target)
+                if destructive:
+                    deny(tool, f"禁止删除/移动研究状态或模型目录 {destructive}：{cmd[:200]}")
         # 规则 5：拦截对 / 、/root、/root/paddlejob/rl-public 的全局 find。
         # 逐段判断，命中即 deny。
         for seg in re.split(r"[;&|]+", cmd):
@@ -126,7 +315,7 @@ def main() -> None:
             deny(tool, f"禁止按进程名/模式杀进程（可能误杀同机器他人进程）：{cmd[:200]}。"
                        "请先用 `pgrep -f <pattern>` 确认，再对具体数字 PID 执行 `kill <PID>`。")
 
-    log("allow", tool, json.dumps(ti, ensure_ascii=False)[:300])
+    # 放行路径不写日志；guard.log 只保留实际拦截，避免高频只读命令造成大量 I/O。
     sys.exit(0)
 
 
@@ -136,5 +325,5 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception as exc:  # fail-open
-        log("error", "?", repr(exc))
+        # 异常也 fail-open，且不把正常/异常放行写入 guard.log；日志只记录 deny。
         sys.exit(0)
