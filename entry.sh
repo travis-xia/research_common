@@ -14,7 +14,7 @@ export BASH_MAX_TIMEOUT_MS="36000000"
 RESEARCH_CLI="${RESEARCH_CLI:-claude}"
 export RESEARCH_CLI
 
-REPO_ROOT="${REPO_ROOT:-/root/ComateProjects/chats/myptbench/PostTrainBench}"
+REPO_ROOT="${REPO_ROOT:-/root/paddlejob/rl-public/xiasheng01/xs_workdir/myptbench/PostTrainBench}"
 COMMON_SRC="$REPO_ROOT/agents/research_common"
 if [ ! -d "$COMMON_SRC" ]; then
     echo "ERROR: 找不到编排器源码 $COMMON_SRC（检查 REPO_ROOT）" >&2

@@ -48,7 +48,7 @@ DRY = os.environ.get("RESEARCH_DRY_RUN", "0") == "1"
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-4B-Base")
 TASK = os.environ.get("TASK", "gsm8k")
 REPO_ROOT = Path(os.environ.get(
-    "REPO_ROOT", "/root/ComateProjects/chats/myptbench/PostTrainBench"))
+    "REPO_ROOT", "/root/paddlejob/rl-public/xiasheng01/xs_workdir/myptbench/PostTrainBench"))
 TASK_TYPE = os.environ.get("RESEARCH_TASK_TYPE", "post_train")
 
 MAX_ROUNDS = int(os.environ.get(

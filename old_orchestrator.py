@@ -55,7 +55,7 @@ EFFORT = os.environ.get("RESEARCH_EFFORT", "max")              # claude: low..ma
 CODEX_EFFORT = os.environ.get("RESEARCH_CODEX_EFFORT", "high")  # codex: low/medium/high/xhigh
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-4B-Base")
 TASK = os.environ.get("TASK", "gsm8k")
-REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/root/ComateProjects/chats/myptbench/PostTrainBench"))
+REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/root/paddlejob/rl-public/xiasheng01/xs_workdir/myptbench/PostTrainBench"))
 DRY = os.environ.get("RESEARCH_DRY_RUN", "0") == "1"
 
 # protocol 产物是 markdown 提醒清单而不是 JSON 契约（2026-09-10 用户决策）：读它的都是

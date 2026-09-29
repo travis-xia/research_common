@@ -20,9 +20,9 @@ unset HF_ENDPOINT
 
 command -v aria2c >/dev/null || { echo "[hf-dl] 缺少 aria2c" >&2; exit 1; }
 
-HFD="${HFD:-/root/ComateProjects/chats/hf_download/hfd.sh}"
+HFD="${HFD:-/root/paddlejob/rl-public/xiasheng01/xs_workdir/hf_download/hfd.sh}"
 if [[ ! -f "$HFD" ]]; then
-    # 布局兜底：skills 目录在 <chats>/myptbench/PostTrainBench/agents/research_common/skills
+    # 布局兜底：skills 目录在 <xs_workdir>/myptbench/PostTrainBench/agents/research_common/skills
     HFD="$(cd "$(dirname "$0")" && pwd)/../../../../../hf_download/hfd.sh"
 fi
 [[ -f "$HFD" ]] || { echo "[hf-dl] 找不到 hfd.sh（可用 HFD=... 显式指定）" >&2; exit 1; }
