@@ -80,6 +80,44 @@ def log(message: str) -> None:
           flush=True)
 
 
+def log_artifact(label: str, *paths, node_path=None) -> None:
+    """节点结束后打印产物路径和 CLI 用量摘要。失败不影响编排。"""
+    try:
+        node = Path(node_path) if node_path else next((Path(p).parent for p in paths if p), None)
+        stream_path = node / f"{label}.stream.jsonl" if node else None
+        bits = [node.name if node else "", f"left={remaining_h():.2f}h"]
+        result = None
+        if stream_path:
+            with stream_path.open("rb") as handle:
+                handle.seek(0, 2)
+                handle.seek(max(0, handle.tell() - 131072))
+                tail = handle.read().decode("utf-8", errors="replace")
+            for line in reversed(tail.splitlines()):
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict) and obj.get("type") == "result":
+                    result = obj
+                    break
+        if result:
+            usage = result.get("usage") or {}
+            mu = result.get("modelUsage") or {}
+            search = sum((v or {}).get("webSearchRequests") or 0
+                         for v in mu.values() if isinstance(v, dict))
+            bits += [
+                result.get("subtype"),
+                f"turns={result.get('num_turns')} ${result.get('total_cost_usd')} "
+                f"in={usage.get('input_tokens')} out={usage.get('output_tokens')} "
+                f"search={search} stop={result.get('stop_reason') or result.get('terminal_reason')}",
+            ]
+        log(f"{label} 结束: {' '.join(str(x) for x in bits if x)}")
+        log(f"{label} 产物: {' '.join(str(p) for p in paths if p)}")
+        log(f"{label} stream: {stream_path or ''}")
+    except Exception:
+        pass
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -446,6 +484,8 @@ def run_step(
         timeout_min=max(1.0, remaining_h() * 60),
     )
     run_cli(prompt, node_path, label, phase, deny_tools, with_agents)
+    extra_path = (extra or {}).get("SELECTED_CONTRACT_PATH")
+    log_artifact(label, contract, extra_path, node_path=node_path)
     return node_path
 
 
@@ -651,6 +691,7 @@ def run_finalizer() -> None:
         "CONTRACT_PATH": str(contract),
     })
     run_cli(prompt, node_path, "finalize", "finalize", with_agents=False)
+    log_artifact("finalize", contract, node_path=node_path)
 
 
 def resolve_base_model() -> Path | None:
