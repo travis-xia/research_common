@@ -21,6 +21,7 @@
 
 - **[必读] Mandatory References**:
   - 本轮选定的科学猜想: `{{HYPOTHESIS_FILE}}`
+  - 请读取 `research/experience_bank.md`，根据score寻找best模型作为改进基础。
   - 运行前工程自查手册 (Preflight Checklist): `skills/engineering/preflight_engineering_check.md`
   - 产物目录完整性与起服校验: `skills/engineering/vllm_serving.md`
   - 防污染与评测提取规范: `skills/post_train/eval_alignment.md`

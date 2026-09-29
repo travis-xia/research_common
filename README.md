@@ -126,12 +126,12 @@ Measurement 在两类情况下触发：开局 `MEASURE_FIRST=1` 时第一轮猜�
 | Baseline | `step0_baseline.md` | `research/baseline.md` |
 | Literature | `step0_literature_review.md` | `research/literature.md` |
 | Synthesis | `step0_synthesis.md` | `research/golden_recipe.md`、`roadmap.json`、`golden_init.json` |
-| Golden Run | `step0_golden_run.md` | `research/golden_run.json`、`nodes/n000-golden-run/model/` |
+| Golden Run | `step0_golden_run.md` | `research/golden_run.json`、`nodes/n000-golden-run/model/`；随后由 Archive 写入 golden archive card |
 | Hypotheses | `step1_hypothesis.md` | `nodes/<nid>/hypotheses.md` |
 | Judge | `step1_judge.md` | `nodes/<nid>/judge.md`、`selected_hypothesis.md` |
 | Measurement | `step2_measurement.md` | `nodes/<nid>/measurement.md` |
 | Experiment | `step3_experiment.md` | `nodes/<nid>/experiment.md`、`model/` |
-| Archive | `step5_archive.md` | `nodes/<nid>/archive_card.md`，追加 `experience_bank.md` |
+| Archive | `step5_archive.md` | `nodes/<nid>/archive_card.md`，追加 `experience_bank.md`；Golden Run 完成后同样执行 |
 
 每个节点目录里还有 `<label>.prompt.md`（收到的完整提示词）和
 `<label>.stream.jsonl`（CLI 的完整事件流）。

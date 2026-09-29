@@ -8,7 +8,7 @@
 2. **Step 1 猜想与裁决 (Hypothesis & Judge)**: 一个 agent 一次性生成至少 N 条短猜想 (`hypotheses.md`) → Judge 直接读取批量文件、对比并写出 `selected_hypothesis.md`。
 3. **Step 2 行为诊断 (Measurement)**: 若候选全否或陷入平台期触发，深挖 badcase 产出诊断报告并沉淀 `research/scripts/diagnose.py`，再回流 Step 1。
 4. **Step 3 端到端实验 (Experiment)**: 对获胜猜想单节点串行完成三件事——规划控制变量与预算、开工前自查代码与配置并就地修补、占卡训练并用统一尺子全量评测。产物是 `experiment.md`。
-5. **Step 5 知识归档 (Archive)**: 提炼因果对，写入经验卡片并追加到 `experience_bank.md`，更新状态后开启下一轮。
+5. **Step 5 知识归档 (Archive)**: Golden Run 和每轮 Experiment 完成后都提炼因果对，写入经验卡片并追加到 `experience_bank.md`；后续 agent 通过 archive 摘要中的分数和模型路径自主判断 best。
 
 ---
 
@@ -20,12 +20,12 @@
 | **Step 0-B Baseline** | 跑 Zero-shot 基准，记录基线分数、失败分桶与 badcase | 官方评测脚本、基座模型 | `research/baseline.md` |
 | **Step 0-C Literature** | 调研候选数据集、训练范式、工程超参先验 | 联网检索、外部论文 | `research/literature.md` |
 | **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe 与演化路线图 | 上述 0-A/B/C 三份报告 | `research/golden_recipe.md`<br>`research/roadmap.json`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
-| **Step 0 Golden Run** | 执行初始化配方，跑通交付管道并全量打分，建立主干模型 | Golden Recipe、基座模型 | `research/golden_run.json`<br>`research/nodes/n000-golden-run/model/` |
+| **Step 0 Golden Run** | 执行初始化配方，跑通交付管道并全量打分，建立主干模型 | Golden Recipe、基座模型 | `research/golden_run.json`<br>`research/nodes/n000-golden-run/model/`<br>`research/nodes/n001-golden-archive/archive_card.md` |
 | **Step 1 Hypotheses** | 一个 agent 针对当前瓶颈一次性提出至少 N 条短机理猜想 | 最新评测结果、`experience_bank.md` | `research/nodes/n{seq}-hypotheses/hypotheses.md` |
 | **Step 1 Judge** | 直接读取批量猜想，核验并选出 Winner，同时落盘胜出猜想 | `hypotheses.md` | `research/nodes/n{seq}-judge/judge.md`、`selected_hypothesis.md` |
 | **Step 2 Measurement**| （瓶颈/全否触发）深挖日志归因，细化分面指标 | 最新评测日志、错误样本轨迹 | `research/nodes/n{seq}-measure/measurement.md`<br>`research/scripts/diagnose.py` |
 | **Step 3 Experiment** | 单节点串行：规划控制变量与预算 → 开工前自查代码/配置并就地修补 → 占卡训练与统一尺子全量评测 | Judge 写出的 `selected_hypothesis.md` | `research/nodes/n{seq}-experiment/experiment.md`<br>`research/nodes/n{seq}-experiment/model/` |
-| **Step 5 Archive** | 结构化沉淀因果对，追加更新长期知识库 | 本轮猜想、方案与实测指标 | `research/nodes/n{seq}-archive/archive_card.md`<br>`research/experience_bank.md` (追加更新) |
+| **Step 5 Archive** | 结构化沉淀因果对，追加更新长期知识库 | Golden Run 或本轮猜想、方案与实测指标 | `research/nodes/n{seq}-archive/archive_card.md`<br>`research/experience_bank.md` (追加更新) |
 
 ---
 
@@ -34,5 +34,5 @@
 - `research/state.json`: 编排器运行状态、轮次序号、当前最佳模型路径与分数 (`best.model`, `best.score`)。
 - `research/journal.md`: 全局实验流水日志，按时间顺序记录每个实验节点的得分与采纳结论。
 - `research/roadmap.json`: 由 Step 0 确立的任务多阶段演化路线图与门禁参考，指导何时发起范式跃迁。
-- `research/experience_bank.md`: 跨轮次沉淀的长期因果经验库（成功机制与失败教训），猜想与 Judge 节点必读。
+- `research/experience_bank.md`: 跨轮次沉淀的长期因果经验库（成功机制与失败教训、score、delta、adopted、model_path），所有后续 agent 必读并据此判断当前 best。
 - `research/scripts/diagnose.py`: 由 Step 2 动态生成的日志分面诊断工具脚本。

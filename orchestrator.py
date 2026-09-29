@@ -274,14 +274,6 @@ def prior_context_summary() -> str:
     return "（前置 Markdown 产物请按需读取：\n- " + "\n- ".join(files) + "\n）"
 
 
-def best_model_hint() -> str:
-    """只提供候选目录位置，最终选择由 agent 自己判断。"""
-    final_model = TASK_DIR / "final_model"
-    if final_model.is_dir():
-        return str(final_model)
-    return str(MODEL)
-
-
 def build_prompt(
     step_file: str,
     node_path: Path,
@@ -314,7 +306,6 @@ def build_prompt(
         "CONTRACT_PATH": str(contract),
         "WORKFLOW_OVERVIEW_PATH": "research/WORKFLOW_OVERVIEW.md",
         "BANK_PATH": str(RES / "experience_bank.md"),
-        "BEST_MODEL_PATH": best_model_hint(),
     }
     context.update(extra or {})
     return render(body, context)
@@ -568,6 +559,22 @@ def step0_init() -> None:
         )},
         with_agents=True,
     )
+    run_step(
+        "step5_archive.md",
+        "golden-archive",
+        "archive",
+        "archive_card.md",
+        "archive",
+        extra={
+            "NODE_ID": "n000-golden-run",
+            "TARGET_KEY": "Golden Recipe",
+            "ARCHIVE_SOURCE": str(NODES / "n000-golden-run" / "result.md"),
+            "MODEL_PATH": str(NODES / "n000-golden-run" / "model"),
+            "BANK_PATH": str(RES / "experience_bank.md"),
+        },
+        deny_tools=["WebSearch", "WebFetch"],
+        with_agents=False,
+    )
 
 
 def latest_measurement() -> str:
@@ -586,7 +593,6 @@ def run_round(round_index: int) -> None:
             "measurement",
             extra={
                 "MEASUREMENT_REASON": "首轮先建立行为分面；请读取已有协议、基线和 Golden Run 产物。",
-                "BEST_MODEL_PATH": best_model_hint(),
             },
             deny_tools=["WebSearch", "WebFetch"],
             with_agents=True,
@@ -642,7 +648,6 @@ def run_round(round_index: int) -> None:
         extra={
             "HYPOTHESIS_FILE": str(selected_dir / "selected_hypothesis.md"),
             "COST_CAP_H": round(max(0.1, remaining_h()), 2),
-            "BEST_MODEL_PATH": best_model_hint(),
         },
         with_agents=True,
     )
@@ -656,6 +661,8 @@ def run_round(round_index: int) -> None:
         extra={
             "NODE_ID": experiment_dir.name,
             "TARGET_KEY": "由 agent 根据 experiment.md 自主填写",
+            "ARCHIVE_SOURCE": str(experiment_dir / "experiment.md"),
+            "MODEL_PATH": str(experiment_dir / "model"),
             "BANK_PATH": str(RES / "experience_bank.md"),
         },
         deny_tools=["WebSearch", "WebFetch"],

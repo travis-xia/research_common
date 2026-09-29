@@ -19,7 +19,7 @@
 # 3. Reference Context (参考资料与上下文)
 
 - **[必读] Mandatory References**:
-  - 当前最好模型路径: `{{BEST_MODEL_PATH}}`
+  - 请读取 `research/experience_bank.md`的历史经验，根据score寻找best模型作为改进基础。
   - 触发诊断的原因: `{{MEASUREMENT_REASON}}`
   - 评测逐题详细输出: `logs/` 下最新的评测日志
 - **[可选] Optional Context**:
