@@ -1,5 +1,35 @@
 {
-  "_comment": "流程记录.md 操作空间表的机器可读形式。猜想必须把靶点落在某个 (domain, module) 坐标上，否则 orchestrator 直接判无效。frozen=true 的坐标禁止干预。每个 module 的 desc 仅界定该靶点的职责范畴并提供典型示例，并非穷举白名单，具体算法、机制和策略完全开放探索。每个 module 都显式带 layer，编排器按本轮允许的层级从这里取坐标池，分给并行候选（同一轮内坐标互斥）。",
+  "_comment": "流程记录.md 操作空间表的机器可读形式。猜想必须把靶点落在某个 (domain, module) 坐标上；frozen=true 的坐标禁止干预。每个 module 的 desc 仅界定靶点职责与典型示例，并非穷举白名单。一个候选可以由多个存在明确因果耦合的坐标组成“干预包”，但必须把组件、耦合理由和无关控制变量写清楚；不要把“单变量”当作默认硬约束。",
+  "package_policy": {
+    "default_objective": "performance_first",
+    "allow_causal_packages": true,
+    "require_component_manifest": true,
+    "require_unrelated_controls": true,
+    "require_teacher_provenance_when_used": true,
+    "single_variable_mode": "optional_ablation_only",
+    "defer_by_default": ["online_rl", "rubric_grpo", "expensive_model_soup"],
+    "do_not_defer_by_default": ["teacher_distillation", "synthetic_task_shaping", "multi_turn_data", "targeted_patch_data", "rejection_sampling"]
+  },
+  "intervention_families": {
+    "data_building": {
+      "targets": ["Training.Data"],
+      "examples": [
+        "local_teacher_distillation",
+        "rubric_shaped_synthetic_data",
+        "multi_turn_context_generation",
+        "final_turn_teacher_rewrite",
+        "rejection_sampling",
+        "targeted_patch_data",
+        "data_mixing_cleaning"
+      ],
+      "priority": "golden_or_early"
+    },
+    "alignment_method": {
+      "targets": ["Training.Method"],
+      "examples": ["full_parameter_sft", "dpo", "grpo", "rft", "curriculum", "model_soup"],
+      "priority": "choose_by_cost_and_evidence"
+    }
+  },
   "domains": {
     "Harness": {
       "layer": "exec",
@@ -21,7 +51,7 @@
     "Training": {
       "layer": "strategy",
       "modules": {
-        "Data": {"desc": "数据配比、筛选、拒绝采样、长 CoT 蒸馏、合成数据、清洗与难度分级等", "layer": "strategy", "frozen": false},
+        "Data": {"desc": "数据配比、筛选、拒绝采样、**本地强教师蒸馏**、rubric/task-shaped 合成数据、多轮上下文与末轮重写、定向 patch、清洗与难度分级等；教师只允许用于本地离线造数/打标，不得替代指定学生基座", "layer": "strategy", "frozen": false},
         "Method": {"desc": "loss、监督信号、更新规则、全参 SFT / LoRA、SFT 冷启动后 RL、Curriculum、Model Merge，以及 DPO / GRPO / PPO 等对齐与学习范式（不限于此）", "layer": "strategy", "frozen": false},
         "Hyperparams": {"desc": "LR、Batch Size、Epochs、Warmup、优化器及调度策略超参等", "layer": "exec", "frozen": false}
       }

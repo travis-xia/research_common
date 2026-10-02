@@ -547,7 +547,7 @@ def step0_init() -> None:
     )
 
     recipe = read_text(RES / "golden_recipe.md").strip()
-    run_step(
+    golden_run_dir = run_step(
         "step0_golden_run.md",
         "golden-run",
         "golden_run",
@@ -566,10 +566,10 @@ def step0_init() -> None:
         "archive_card.md",
         "archive",
         extra={
-            "NODE_ID": "n000-golden-run",
+            "NODE_ID": golden_run_dir.name,
             "TARGET_KEY": "Golden Recipe",
-            "ARCHIVE_SOURCE": str(NODES / "n000-golden-run" / "result.md"),
-            "MODEL_PATH": str(NODES / "n000-golden-run" / "model"),
+            "ARCHIVE_SOURCE": str(golden_run_dir / "result.md"),
+            "MODEL_PATH": str(golden_run_dir / "model"),
             "BANK_PATH": str(RES / "experience_bank.md"),
         },
         deny_tools=["WebSearch", "WebFetch"],
@@ -619,7 +619,7 @@ def run_round(round_index: int) -> None:
         with_agents=False,
     )
 
-    selected_dir = run_step(
+    run_step(
         "step1_judge.md",
         "judge",
         "judge",
@@ -638,6 +638,7 @@ def run_round(round_index: int) -> None:
         deny_tools=["WebSearch", "WebFetch"],
         with_agents=False,
     )
+    selected_contract = hypothesis_dir / "selected_hypothesis.md"
 
     experiment_dir = run_step(
         "step3_experiment.md",
@@ -646,7 +647,7 @@ def run_round(round_index: int) -> None:
         "experiment.md",
         "experiment",
         extra={
-            "HYPOTHESIS_FILE": str(selected_dir / "selected_hypothesis.md"),
+            "HYPOTHESIS_FILE": str(selected_contract),
             "COST_CAP_H": round(max(0.1, remaining_h()), 2),
         },
         with_agents=True,
@@ -660,7 +661,7 @@ def run_round(round_index: int) -> None:
         "archive",
         extra={
             "NODE_ID": experiment_dir.name,
-            "TARGET_KEY": "由 agent 根据 experiment.md 自主填写",
+            "TARGET_KEY": "从 selected_hypothesis.md 与 experiment.md 的干预包清单提取（允许 Multi: 坐标组合）",
             "ARCHIVE_SOURCE": str(experiment_dir / "experiment.md"),
             "MODEL_PATH": str(experiment_dir / "model"),
             "BANK_PATH": str(RES / "experience_bank.md"),
