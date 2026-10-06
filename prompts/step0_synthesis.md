@@ -24,7 +24,7 @@
   - 评测协议事实: `research/protocol.md`
   - 基线实测表现与瓶颈: `research/baseline.md`（零样本基线得分、耗时、失败分桶与代表性 Bad Cases）
   - 外部数据与范式证据: `research/literature.md`（外部的调研仅供参考）
-  - 制定训练配方指南: `skills/post_train/recipe_guidelines.md`（重要参考经验）
+  - 训练方案设计参考: `skills/post_train/recipe_guidelines.md`
 - **[可选] Optional Context**:
   - 解码与停机符指南: `skills/post_train/inference_and_decoding.md`
   - 交付与部署指南: `skills/engineering/vllm_serving.md`

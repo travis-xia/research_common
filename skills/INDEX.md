@@ -1,13 +1,13 @@
 # RSI Skills 技能索引手册
 
-本文档为当前环境下的工程指南与领域先验索引。Agent 在进行相关决策、检查或实验实现时，应根据当前任务需要自主读取对应的指南。
+本文档为当前环境下的工程指南与领域知识索引。Agent 在进行相关决策、检查或实验实现时，应根据当前任务需要自主读取对应的指南。
 
 ---
 
 ## 1. 模型后训练 (Post-Training) 指南
-- **[训练方案与超参指南](post_train/recipe_guidelines.md)** (`skills/post_train/recipe_guidelines.md`)
-  - *触发时机*：制定训练配方、调整学习率、批次大小、Epoch、LoRA vs 全参选择时。
-  - *核心内容*：收敛性原则、学习率安全区间、有效批次大小设置、防止过拟合的经验纪律。
+- **[训练方案设计参考](post_train/recipe_guidelines.md)** (`skills/post_train/recipe_guidelines.md`)
+  - *触发时机*：制定训练配方、构思训练相关假设、调整超参或选择训练范式时。
+  - *核心内容*：正确性约束、任务刻画维度、失败模式与诊断信号、超参区间、常见维度组合的 Golden 默认取值、本地数据生产与门禁。
 
 - **[推理解码与停机符配置](post_train/inference_and_decoding.md)** (`skills/post_train/inference_and_decoding.md`)
   - *触发时机*：遇到输出截断、重复无意义字符、模型不停止回答，或调整 generation_config 时。

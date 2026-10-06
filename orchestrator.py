@@ -319,6 +319,12 @@ def child_env(phase: str) -> dict:
     # 允许训练和评测自然完成；不在编排器里给单条 Bash 命令另设短上限。
     env["BASH_MAX_TIMEOUT_MS"] = os.environ.get(
         "BASH_MAX_TIMEOUT_MS", "36000000")
+    # 无头 --print 模式下回合结束即进程退出，后台任务的完成通知永远送不到；
+    # 关掉后台任务并放宽单条命令默认超时，让 agent 在前台守完长任务。
+    env["BASH_DEFAULT_TIMEOUT_MS"] = os.environ.get(
+        "BASH_DEFAULT_TIMEOUT_MS", "3600000")
+    env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = os.environ.get(
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1")
     return env
 
 

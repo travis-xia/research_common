@@ -43,6 +43,8 @@ esac
 mkdir -p research
 rm -rf research/harness_src
 cp -r "$COMMON_SRC" research/harness_src
+# .git 历史里有已删除的 recipe 汇总，不能让节点读到
+rm -rf research/harness_src/.git
 
 export RESEARCH_AGENT_DIR="$PWD/research/harness_src"
 export RESEARCH_DIR="$PWD/research"
