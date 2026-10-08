@@ -55,7 +55,8 @@ MAX_ROUNDS = int(os.environ.get(
     "RESEARCH_MAX_ROUNDS", os.environ.get("RESEARCH_MAX_NODES", "40")))
 N_HYPO = max(1, int(os.environ.get("RESEARCH_N_HYPO", "3")))
 MEASURE_FIRST = os.environ.get("RESEARCH_MEASURE_FIRST", "1") == "1"
-RESERVE_FRAC = float(os.environ.get("RESEARCH_RESERVE_FRAC", "0.08"))
+FINALIZE_RESERVE_MIN = float(os.environ.get(
+    "RESEARCH_FINALIZE_RESERVE_MIN", "20"))
 RULER_N = int(os.environ.get("RESEARCH_RULER_N", "300"))
 RULER_MIN_N = int(os.environ.get("RESEARCH_RULER_MIN_N", "200"))
 OFFICIAL_CHECK_LIMIT = int(os.environ.get(
@@ -72,7 +73,11 @@ _DEADLINE: float | None = None
 _ACTIVE_PROCS: set[subprocess.Popen] = set()
 _ACTIVE_LOCK = threading.Lock()
 _NODE_LOCK = threading.Lock()
-_FINALIZED = False
+_RESEARCH_STOP = threading.Event()
+
+
+class ResearchTimeUp(Exception):
+    pass
 
 
 def log(message: str) -> None:
@@ -172,6 +177,11 @@ def remaining_h() -> float:
     if _DEADLINE is None:
         return timer_remaining_h()
     return max(0.0, (_DEADLINE - time.time()) / 3600.0)
+
+
+def research_remaining_h() -> float:
+    """研究节点可用时间：总剩余时间扣掉固定留给 finalizer 的部分。"""
+    return max(0.0, remaining_h() - FINALIZE_RESERVE_MIN / 60.0)
 
 
 def benchmark_name() -> str:
@@ -289,8 +299,8 @@ def build_prompt(
         "MODEL": MODEL,
         "BENCHMARK": benchmark_name(),
         "NODE_TIMEOUT_MIN": "" if step_file == "step0_golden_run.md"
-        else round(timeout_min if timeout_min is not None else remaining_h() * 60, 2),
-        "REMAINING_H": round(remaining_h(), 2),
+        else round(timeout_min if timeout_min is not None else research_remaining_h() * 60, 2),
+        "REMAINING_H": round(research_remaining_h(), 2),
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
         "PROTOCOL": read_text(RES / "protocol.md").strip(),
         "BEST_SUMMARY": prior_context_summary(),
@@ -355,9 +365,11 @@ def cli_command(node_path: Path, deny_tools: list[str] | None,
     return command, {"CLAUDE_CONFIG_DIR": str(node_path / ".cc")}
 
 
-def _register_process(process: subprocess.Popen) -> None:
+def _register_process(process: subprocess.Popen, stoppable: bool) -> bool:
+    """登记进程；返回 True 表示研究阶段已结束，调用方应立即终止它。"""
     with _ACTIVE_LOCK:
         _ACTIVE_PROCS.add(process)
+        return stoppable and _RESEARCH_STOP.is_set()
 
 
 def _unregister_process(process: subprocess.Popen) -> None:
@@ -372,6 +384,7 @@ def run_cli(
     phase: str,
     deny_tools: list[str] | None = None,
     with_agents: bool = False,
+    stoppable: bool = True,
 ) -> int:
     node_path.mkdir(parents=True, exist_ok=True)
     (node_path / f"{label}.prompt.md").write_text(prompt, encoding="utf-8")
@@ -402,7 +415,8 @@ def run_cli(
         bufsize=1,
         start_new_session=True,
     )
-    _register_process(process)
+    if _register_process(process, stoppable):
+        kill_process_groups([process])
     events = 0
     try:
         with stream_path.open("w", encoding="utf-8") as stream:
@@ -471,6 +485,8 @@ def run_step(
     deny_tools: list[str] | None = None,
     with_agents: bool = False,
 ) -> Path:
+    if _RESEARCH_STOP.is_set():
+        raise ResearchTimeUp(label)
     node_path = node_dir(kind)
     contract = node_path / contract_name
     prompt = build_prompt(
@@ -478,7 +494,7 @@ def run_step(
         node_path,
         contract,
         extra=extra,
-        timeout_min=max(1.0, remaining_h() * 60),
+        timeout_min=max(1.0, research_remaining_h() * 60),
     )
     run_cli(prompt, node_path, label, phase, deny_tools, with_agents)
     extra_path = (extra or {}).get("SELECTED_CONTRACT_PATH")
@@ -639,7 +655,7 @@ def run_round(round_index: int) -> None:
             "ALLOWED_LAYERS": "strategy/exec",
             "MODE": "explore",
             "MODE_HINT": "读取候选和全部历史 Markdown 后自主裁决。",
-            "COST_CAP_H": round(max(0.1, remaining_h() - RESERVE_FRAC * timer_remaining_h()), 2),
+            "COST_CAP_H": round(max(0.1, research_remaining_h()), 2),
         },
         deny_tools=["WebSearch", "WebFetch"],
         with_agents=False,
@@ -654,7 +670,7 @@ def run_round(round_index: int) -> None:
         "experiment",
         extra={
             "HYPOTHESIS_FILE": str(selected_contract),
-            "COST_CAP_H": round(max(0.1, remaining_h()), 2),
+            "COST_CAP_H": round(max(0.1, research_remaining_h()), 2),
         },
         with_agents=True,
     )
@@ -678,6 +694,7 @@ def run_round(round_index: int) -> None:
 
 
 FINALIZE_PROMPT = """你是研究流水线的最终交付 agent。
+剩余时间约 {{REMAINING_MIN}} 分钟，到点会被强制终止。
 
 当前工作目录：{{TASK_DIR}}
 研究目录：{{RESEARCH_DIR}}
@@ -685,12 +702,14 @@ FINALIZE_PROMPT = """你是研究流水线的最终交付 agent。
 最终交付目录：{{FINAL_MODEL_PATH}}
 最终报告：{{CONTRACT_PATH}}
 
-请读取 research/ 下所有相关 Markdown、各节点的实验报告、模型路径和评测结果。
-你负责自行判断哪个模型是当前最值得交付的；不要依赖 state.json，也不要假设最后一个节点最好。
-将选中的完整模型目录复制到最终交付目录 `{{FINAL_MODEL_PATH}}`。
-如果没有可用的改进模型，则复制基座模型或其本地快照到该目录。
-完成后把选择依据、来源模型路径和最终状态写入 `{{CONTRACT_PATH}}`。
-不要修改 prompts、编排器源码或原始实验报告。
+只做下面三件事，不要训练、不要评测，不要修改 prompts、编排器源码或原始实验报告：
+
+1. 选择：读取 research/ 下的 Markdown、各节点实验报告中已有的评测结果和模型路径，
+   判断哪个模型最值得交付。不要依赖 state.json，也不要假设最后一个节点最好。
+   没有可用的改进模型时，选择基座模型或其本地快照。
+2. 拷贝：先把选中的完整模型目录复制到 `{{FINAL_MODEL_PATH}}.tmp`，
+   确认 config.json、tokenizer 和权重文件齐全后，再 `mv` 为 `{{FINAL_MODEL_PATH}}`。
+3. 记录：把选择依据、来源模型路径和最终状态写入 `{{CONTRACT_PATH}}`。
 """
 
 
@@ -703,8 +722,10 @@ def run_finalizer() -> None:
         "MODEL": MODEL,
         "FINAL_MODEL_PATH": str(TASK_DIR / "final_model"),
         "CONTRACT_PATH": str(contract),
+        "REMAINING_MIN": round(remaining_h() * 60),
     })
-    run_cli(prompt, node_path, "finalize", "finalize", with_agents=False)
+    run_cli(prompt, node_path, "finalize", "finalize", with_agents=False,
+            stoppable=False)
     log_artifact("finalize", contract, node_path=node_path)
 
 
@@ -743,6 +764,10 @@ def fallback_final_model() -> None:
 def stop_active_processes() -> None:
     with _ACTIVE_LOCK:
         processes = list(_ACTIVE_PROCS)
+    kill_process_groups(processes)
+
+
+def kill_process_groups(processes: list[subprocess.Popen]) -> None:
     for process in processes:
         if process.poll() is not None:
             continue
@@ -750,6 +775,24 @@ def stop_active_processes() -> None:
             os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+def research_watchdog(stop_at: float) -> None:
+    """到 finalizer 预留时间点时终止所有研究 agent，不等当前步骤结束。"""
+    if _RESEARCH_STOP.wait(max(0.0, stop_at - time.time())):
+        return
+    with _ACTIVE_LOCK:
+        if _RESEARCH_STOP.is_set():
+            return
+        _RESEARCH_STOP.set()
+        processes = list(_ACTIVE_PROCS)
+    log(f"距截止只剩 {FINALIZE_RESERVE_MIN:g} 分钟，终止研究 agent，转入 finalizer")
+    kill_process_groups(processes)
+
+
+def end_research() -> None:
+    with _ACTIVE_LOCK:
+        _RESEARCH_STOP.set()
 
 
 def on_term(signum, _frame) -> None:
@@ -772,13 +815,23 @@ def main() -> int:
     bootstrap()
     log(f"轻量编排器启动：预算 {total_h:.2f}h，cli={CLI}，model={CLI_MODEL or 'default'}")
 
+    threading.Thread(
+        target=research_watchdog,
+        args=(_DEADLINE - FINALIZE_RESERVE_MIN * 60,),
+        daemon=True,
+    ).start()
+
     try:
-        step0_init()
-        for round_index in range(1, MAX_ROUNDS + 1):
-            if remaining_h() <= max(0.1, total_h * RESERVE_FRAC):
-                log("剩余预算进入收尾区间，停止启动新的研究 round")
-                break
-            run_round(round_index)
+        try:
+            step0_init()
+            for round_index in range(1, MAX_ROUNDS + 1):
+                run_round(round_index)
+        except Exception:
+            # 预留时间点到达后，被终止的 agent 可能以任意异常退出。
+            if not _RESEARCH_STOP.is_set():
+                raise
+            log("研究阶段到达 finalizer 预留时间点")
+        end_research()
         run_finalizer()
     finally:
         fallback_final_model()

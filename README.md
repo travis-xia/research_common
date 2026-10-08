@@ -65,9 +65,10 @@ finalize: best → ./final_model
   封顶后：Init 约 103 分钟、Run 约 257 分钟，结余进循环。
 - Init 内部：三路 specialist 并行，各拿 Init 窗口的 45%（10h 下各 27 分钟），
   synthesis 拿剩余、保底 55%。
-- 收尾保留 8%，用于 `final_model` 交付。
-- 循环内的节点没有单独的时间配额，超时等于当前剩余墙钟减去收尾保留。
-  唯一的硬停是全局墙钟：到点发 SIGTERM，`finalize()` 保住 `final_model`。
+- 固定保留最后 20 分钟给 finalizer：到点立即终止正在运行的研究 agent（不等当前步骤结束），
+  由 finalizer 只做选择、拷贝、记录。
+- 循环内的节点没有单独的时间配额，超时等于当前剩余墙钟减去 finalizer 保留。
+  全局墙钟到点发 SIGTERM，回退基座模型保住 `final_model`。
 
 ### 调度
 
@@ -187,7 +188,7 @@ checkpoint 只保留 best 和最近 `KEEP_CKPT=2` 个实验节点的权重。
 | `RESEARCH_GOLDEN_CAP_H` | 6 | Golden 阶段的绝对上限（小时） |
 | `RESEARCH_GOLDEN_FRAC` | 0.10 | Init 占预算的比例，实际拿信封的 `GOLDEN_FRAC/GOLDEN_RUN_FRAC` |
 | `RESEARCH_GOLDEN_RUN` | 1 | 设 0 关掉 Golden Run |
-| `RESEARCH_RESERVE_FRAC` | 0.08 | 收尾保留比例 |
+| `RESEARCH_FINALIZE_RESERVE_MIN` | 20 | 固定留给 finalizer 的分钟数 |
 | `RESEARCH_KEEP_CKPT` | 2 | 除 best 外保留的 checkpoint 数 |
 | `RESEARCH_NODE_HARD_KILL` | 0 | 设 1 恢复到点强杀单个节点 |
 
