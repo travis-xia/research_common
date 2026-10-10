@@ -34,7 +34,8 @@
     - 评测协议核心: `research/protocol.md`（按需查阅答案抽取与判分、终止符等受控事实，避免全篇盲读）
     - 零样本基线报告: `research/baseline.md`（基线实测表现与失败分桶）
     - 当前主干配方: `research/golden_recipe.md`（受控变量以它为准）
-    - 制定训练配方指南: `skills/post_train/recipe_guidelines.md`
+    - 训练方案设计方法（分数优先级、数值取值方式、必看信号）: `skills/post_train/recipe_guidelines.md`
+    - 外部数据、公开方案反查与针对性方法: `research/literature.md`（数值优先从这里或本 run 实测中取，注明出处）
     - 主干演化路线: `research/roadmap.json`（阶段路线与门禁参考，供自主判断当前阶段与是否发起范式跃迁）
     - 历史知识库: `research/experience_bank.md`（路径 `{{BANK_PATH}}`；**初始为空**——若已有多轮沉淀，重点查阅近期条目，严禁重复已被证伪的路线）
 - **[可选] Optional Context**:

@@ -5,17 +5,17 @@
 ---
 
 ## 1. 模型后训练 (Post-Training) 指南
-- **[训练方案设计参考](post_train/recipe_guidelines.md)** (`skills/post_train/recipe_guidelines.md`)
+- **[训练方案设计方法](post_train/recipe_guidelines.md)** (`skills/post_train/recipe_guidelines.md`)
   - *触发时机*：制定训练配方、构思训练相关假设、调整超参或选择训练范式时。
-  - *核心内容*：正确性约束、任务刻画维度、失败模式与诊断信号、超参区间、常见维度组合的 Golden 默认取值、本地数据生产与门禁。
+  - *核心内容*：分数优先级、数值取证规则、预算可行域估算、必看信号。不含默认数值与具体方法，方案与数值来自 `research/literature.md` 的公开方案反查。
 
 - **[推理解码与停机符配置](post_train/inference_and_decoding.md)** (`skills/post_train/inference_and_decoding.md`)
   - *触发时机*：遇到输出截断、重复无意义字符、模型不停止回答，或调整 generation_config 时。
-  - *核心内容*：双 EOS 停机符显式配置、四个采样键完整性、Temperature 针对长短任务的取值差异。
+  - *核心内容*：双 EOS 停机符显式配置、四个采样键完整性、推理引擎读取 generation_config 的方式、Temperature 针对长短任务的取值原则。
 
 - **[评测对齐与防污染规范](post_train/eval_alignment.md)** (`skills/post_train/eval_alignment.md`)
   - *触发时机*：设计训练数据格式、对齐提示词模板、执行数据防污染自查时。
-  - *核心内容*：评测输入输出四层对齐（上下文、包装、正文、收尾）、答案格式严格对应、测试集污染自查。
+  - *核心内容*：评测输入输出四层对齐（上下文、包装、正文、收尾）、终答位于思考段之外、loss 范围、落盘前校验、测试集污染自查。
 
 ---
 

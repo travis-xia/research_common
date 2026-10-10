@@ -24,9 +24,9 @@
   - 评测协议事实: `research/protocol.md`
   - 基线实测表现与瓶颈: `research/baseline.md`（零样本基线得分、耗时、失败分桶与代表性 Bad Cases）
   - 外部数据与范式证据: `research/literature.md`（外部的调研仅供参考）
-  - 训练方案设计参考: `skills/post_train/recipe_guidelines.md`
-- **[可选] Optional Context**:
+  - 训练方案设计方法: `skills/post_train/recipe_guidelines.md`
   - 解码与停机符指南: `skills/post_train/inference_and_decoding.md`
+- **[可选] Optional Context**:
   - 交付与部署指南: `skills/engineering/vllm_serving.md`
   - 环境与硬件支持指南: `skills/engineering/env_and_hardware.md`
 
@@ -36,7 +36,9 @@
 
 - **Core Directives (核心任务与执行规范)**:
   1. **综合审计**：
-     - 检查基线主要瓶颈（是格式对齐问题？还是知识不足？还是推理过早截断？）。
+     - 检查基线主要瓶颈（是格式对齐问题？还是知识不足？还是推理过早截断？），按 `recipe_guidelines.md` §4 统计对应信号并写出数值。
+     - 按 `recipe_guidelines.md` §3 划定预算可行域（可参考 literature 中的估算，用协议的序列长度与基线实测修正）。
+     - 按 `recipe_guidelines.md` §1 的优先级定主干：数据选择以 literature 第 1 节为准，数据量、构造流程与训练配置以第 3 节的推荐方案为准，针对性方法从第 3、4 节中按信号挑选。
      - 结合外部数据与协议，确定首轮改进的最核心抓手。
   2. **制定统一评测尺子 (`ruler`)**：
      - 为后续所有实验规定一个标准、固定的评测指令（建议沿用官方评测命令；若全量过慢，固定 `--limit 300` 且全程不再变动）。
@@ -45,6 +47,7 @@
      - 同步生成一份精简通用的演化路线图落盘至 `research/roadmap.json`，为后续 Hypothesis 提供阶段与范式演进参考（2~3 个阶段即可，定义各阶段目标、准出/准入门禁及建议动作）。
   4. **高分优先的阶段取舍**：
      - Golden Recipe 是第一个**可交付且尽可能高分的完整主干**。
+  5. **数值有出处**：配方中的每个数值（数据规模与过滤阈值、序列长度、学习率、epoch、解码参数等）注明来源：协议 / 基线实测、`research/literature.md` 中的出处、或预算推导算式。三者都没有的参数不要凭印象填写，按 `recipe_guidelines.md` §2 处理：解码参数、epoch、checkpoint 平均等低成本参数，在执行工单里写成「训练后在尺子子集上对比给定的几个候选值，取优写入」并给出候选值；学习率、数据规模等需要重训才能比较的参数，取最接近本任务条件的公开证据给出单一取值。
 
 - **Banned Actions (禁止项)**:
   - 严禁全局 `find /` 遍历扫描；清理进程必须基于 PID，严禁按字符串/进程名匹配误杀。
@@ -86,6 +89,7 @@ ruler_cmd: "python evaluate.py ..."  # 全程不变的可行的效率最优评�
 - **训练范式**: (如全参 SFT、SFT+DPO)
 - **控制变量**: (学生基座/初始化、评测模板、EOS、评测尺子)
 - **generation_config 设定**: (显式列出 eos_token_id, temperature, top_p 等)
+- **参数来源**: (每个关键数值 → 实测 / literature 出处 / 预算推导 / 待尺子对比的候选值)
 
 ## 5. 完整执行工单步骤 (Steps)
 ```bash

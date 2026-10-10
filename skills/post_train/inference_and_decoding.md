@@ -28,9 +28,17 @@
   ```
 - **Temperature 取值原则**：
   - 短答案 / 严格格式任务：推荐贪心解码（`temperature: 0.0`, `do_sample: false`），可复现且格式稳定。
-  - 长思维链 (Long CoT / `<think>` 标签) 任务：极端贪心解码（temp=0）可能导致陷入死循环无法闭合思维标签。若观察到严重截断或复读，可尝试使用轻微随机性（如 `temperature: 0.6`, `top_p: 0.95`）。
+  - 长思维链 (Long CoT / `<think>` 标签) 任务：极端贪心解码可能导致陷入死循环无法闭合思维标签。若观察到严重截断或复读，改用轻微随机性；起点取目标基座同家族模型卡（Instruct / Thinking 版）对相应模式的官方推荐采样参数，再按 `recipe_guidelines.md` §4 在尺子子集上确认。
+- **额外键同样写入文件**：如使用 `repetition_penalty` 等额外解码键，同样写进 `generation_config.json`。
+
+### 推理引擎如何读取解码配置
+- 部分推理引擎（如 vLLM）直接把 `generation_config.json` 中的采样键当作默认采样参数，并忽略 `do_sample`。只写 `do_sample: false` 不等于贪心，目标温度必须写进文件本身。
+- 评测命令不传采样参数时，交付目录里的 `generation_config.json` 就是全部解码策略。本环境的 vLLM 只读取 `repetition_penalty`、`temperature`、`top_k`、`top_p`、`min_p`、`max_new_tokens` 这几个键（可在本机 vllm 源码 `config/model.py` 的 `get_diff_sampling_param` 核对）；`presence_penalty`、`frequency_penalty` 写进去不生效。模型卡推荐的 presence 类惩罚在本评测中无法通过交付目录生效，需要抑制复读时只能用 `repetition_penalty`。
+- 两类惩罚尺度不同，数值不能照搬：`repetition_penalty` 是乘性系数，1.0 表示不惩罚，偏离 1 越远越强；`presence_penalty` 是加性项，0 表示不惩罚。
+- 先查看基座自带 `generation_config.json` 的默认值，基座默认的采样参数通常不是评测想要的取值。
+- 训练框架保存模型时可能用基座默认值覆盖 `generation_config.json`；保存后必须复核文件内容。
 
 ---
 
 ## 3. 生成上限取小原则
-- 推理引擎最终的截断长度通常由模型的 `generation_config.max_new_tokens` 与评测请求传参中的上限**取较小值**决定。确保两者协调，切勿让模型自身的配置低于评测所需长度。
+- 推理引擎最终的截断长度通常由模型的 `generation_config.max_new_tokens` 与评测请求传参中的上限**取较小值**决定。确保两者协调，切勿让模型自身的配置低于评测所需长度；基座默认的 `max_new_tokens` 常低于评测上限，需显式改成不小于评测上限。

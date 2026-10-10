@@ -18,7 +18,7 @@
 | :--- | :--- | :--- | :--- |
 | **Step 0-A Protocol** | 提炼官方评测启动命令、输入模板、终止符、抽取正则 | 评测源码与配置文件 | `research/protocol.md` |
 | **Step 0-B Baseline** | 跑 Zero-shot 基准，记录基线分数、失败分桶与 badcase | 官方评测脚本、基座模型 | `research/baseline.md` |
-| **Step 0-C Literature** | 调研候选数据集、训练范式、工程超参先验 | 联网检索、外部论文 | `research/literature.md` |
+| **Step 0-C Literature** | 反查同类任务的最强公开方案，归纳数据、数据量、构造流程、训练与解码配置及针对性方法（均带出处） | 联网检索、外部论文 | `research/literature.md` |
 | **Step 0-Synthesis** | 冻结全 run 统一评测尺子 (Ruler)，输出 Golden Recipe 与演化路线图 | 上述 0-A/B/C 三份报告 | `research/golden_recipe.md`<br>`research/roadmap.json`<br>`research/nodes/n000-golden-synthesis/golden_synthesis.md` |
 | **Step 0 Golden Run** | 执行初始化配方，跑通交付管道并全量打分，建立主干模型 | Golden Recipe、基座模型 | `research/golden_run.json`<br>`research/nodes/n000-golden-run/model/`<br>`research/nodes/n001-golden-archive/archive_card.md` |
 | **Step 1 Hypotheses** | 一个 agent 针对当前瓶颈一次性提出至少 N 条研究方案 | 最新评测结果、`experience_bank.md` | `research/nodes/n{seq}-hypotheses/hypotheses.md` |

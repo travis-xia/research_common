@@ -34,9 +34,12 @@
     "Harness": {
       "layer": "exec",
       "modules": {
-        "Prompt": {"desc": "评估/推理提示词与模板对齐、Few-shot/Zero-shot 设计、系统提示等", "layer": "exec", "frozen": false},
-        "ToolSkills": {"desc": "扩展/修改可用工具与 skills、外部搜索/执行插件等", "layer": "exec", "frozen": false},
-        "Memory": {"desc": "历史经验与轨迹读写机制、检索增强、状态管理等", "layer": "exec", "frozen": false},
+        "Prompt": {"desc": "评估/推理提示词与模板对齐、Few-shot/Zero-shot 设计、系统提示等", "layer": "exec", "frozen": true,
+          "frozen_reason": "评测 prompt 与 chat template 由 evaluate.py 与 templates/ 决定，不可修改；训练样本的 prompt 对齐属于 Training.Data"},
+        "ToolSkills": {"desc": "扩展/修改可用工具与 skills、外部搜索/执行插件等", "layer": "exec", "frozen": true,
+          "frozen_reason": "本 harness 自身就是被评估对象；交付的 final_model 评测时也不调用工具"},
+        "Memory": {"desc": "历史经验与轨迹读写机制、检索增强、状态管理等", "layer": "exec", "frozen": true,
+          "frozen_reason": "本 harness 自身就是被评估对象，节点内不得改经验读写机制"},
         "Orchestration": {"desc": "多 agent / 流程控制逻辑", "layer": "strategy", "frozen": true,
           "frozen_reason": "本 harness 自身就是被评估对象，节点内不得改编排器"}
       }
@@ -44,8 +47,10 @@
     "Model": {
       "layer": "strategy",
       "modules": {
-        "InternalArch": {"desc": "模型架构微调 / 层选择、注意力机制改造、位置编码、剪枝稀疏化等", "layer": "strategy", "frozen": false},
-        "ExternalModule": {"desc": "外挂 Adapter / 辅助 Head / 外部模块、Verifier/PRM 外挂、轻量接入层等", "layer": "strategy", "frozen": false}
+        "InternalArch": {"desc": "模型架构微调 / 层选择、注意力机制改造、位置编码、剪枝稀疏化等", "layer": "strategy", "frozen": true,
+          "frozen_reason": "final_model 须在同一环境下被 evaluate.py 的 vLLM 直接加载，本任务不改模型结构"},
+        "ExternalModule": {"desc": "外挂 Adapter / 辅助 Head / 外部模块、Verifier/PRM 外挂、轻量接入层等", "layer": "strategy", "frozen": true,
+          "frozen_reason": "评测只加载 final_model 单模型单次生成，外挂模块与 verifier 不会被调用"}
       }
     },
     "Training": {
