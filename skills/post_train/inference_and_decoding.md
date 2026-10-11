@@ -28,7 +28,7 @@
   ```
 - **Temperature 取值原则**：
   - 短答案 / 严格格式任务：推荐贪心解码（`temperature: 0.0`, `do_sample: false`），可复现且格式稳定。
-  - 长思维链 (Long CoT / `<think>` 标签) 任务：极端贪心解码可能导致陷入死循环无法闭合思维标签。若观察到严重截断或复读，改用轻微随机性；起点取目标基座同家族模型卡（Instruct / Thinking 版）对相应模式的官方推荐采样参数，再按 `recipe_guidelines.md` §4 在尺子子集上确认。
+  - 长思维链 (Long CoT / `<think>` 标签) 任务：极端贪心解码可能导致陷入死循环无法闭合思维标签。若观察到严重截断或复读，改用轻微随机性；起点取目标基座同家族模型卡（Instruct / Thinking 版）对相应模式的官方推荐采样参数，再按 `recipe_guidelines.md` §3 在尺子子集上确认。
 - **额外键同样写入文件**：如使用 `repetition_penalty` 等额外解码键，同样写进 `generation_config.json`。
 
 ### 推理引擎如何读取解码配置

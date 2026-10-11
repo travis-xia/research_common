@@ -8,6 +8,7 @@
 
 # 2. Operating Environment (工作环境与工具)
 
+- Skills 位置：本文及 skills 文件中所有以 `skills/` 开头的路径，实际位于 `research/harness_src/skills/`（相对当前工作目录）。
 - 当前工作目录: `{{TASK_DIR}}`
 - 本节点目录: `{{NODE_DIR}}`
 - 当前节点: `{{NODE_ID}}`

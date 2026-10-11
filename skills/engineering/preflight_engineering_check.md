@@ -16,9 +16,9 @@
 
 ### B. 脚本实现与超参核验 (Script Implementation & Hyperparameters)
 - [ ] **超参笔误自查**：核对代码或启动参数中的学习率（LR）、Batch Size、Epochs、Warmup Steps 是否与方案严格一致，特别防范数量级笔误（如把 `2e-5` 误写为 `2e-4` 或 `2e-6`）。
-- [ ] **控制变量受控**：确认除方案声明的修改变量外，其他训练超参与骨干配置保持严格受控不变，严禁代码中顺带改动未声明的参数。
 - [ ] **数据处理逻辑**：检查数据分词、截断逻辑（`max_length` / `max_tokens`），确保输入截断不会切断题干末尾或答案区域。
 - [ ] **环境与显存控制（bs先大后小，OOM再减半）**：检查 batch size、梯度累积步数、序列长度配置。坚持 per-device batch size 先大后小，只有发生真实 OOM 时才减半并翻倍 gradient_accumulation_steps 补齐有效批次；严禁凭空盲目将 batch size 压得很小导致吞吐腰斩。开启 FlashAttention-2 与 Gradient Checkpointing。
+- [ ] **大词表 logits 显存**：大词表时，长序列下单次就可能申请到十几 GiB 而 OOM（TRL 默认在 `compute_loss` 中一次性算完整 logits）。超出余量时使用 fused / chunked cross entropy（如 Liger Kernel 的 fused linear CE，或只在被监督 token 上分块计算 loss）。
 
 ### C. 代码健康与交付自包含 (Code Health & Deliverables)
 - [ ] **语法与路径合法性**：静态检查新增的 Python 脚本或 shell 命令，确认无语法错误、未导入的依赖包或不存在的路径引用。

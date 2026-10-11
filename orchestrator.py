@@ -44,6 +44,8 @@ EFFORT = os.environ.get("RESEARCH_EFFORT", "max")
 CODEX_EFFORT = os.environ.get("RESEARCH_CODEX_EFFORT", "high")
 USE_AGENTS = os.environ.get("RESEARCH_USE_AGENTS", "1") == "1"
 DRY = os.environ.get("RESEARCH_DRY_RUN", "0") == "1"
+# --print 下 Monitor 的完成通知送不回来，agent 会空等。每个 Claude 节点都禁。
+ALWAYS_DENY = ["Monitor"]
 
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3-4B-Base")
 TASK = os.environ.get("TASK", "gsm8k")
@@ -216,6 +218,13 @@ def node_dir(kind: str) -> Path:
 
 
 def render(text: str, context: dict) -> str:
+    # {{INCLUDE:<相对 skills/ 的路径>}} 先展开成对应文件内容，再统一替换占位符。
+    text = re.sub(
+        r"\{\{INCLUDE:([\w./-]+)\}\}",
+        lambda m: read_text(AGENT_DIR / "skills" / m.group(1),
+                            f"（缺失注入文件 skills/{m.group(1)}）").strip(),
+        text,
+    )
     for key, value in context.items():
         text = text.replace("{{" + key + "}}", str(value))
     return text
@@ -356,8 +365,11 @@ def cli_command(node_path: Path, deny_tools: list[str] | None,
     ]
     if CLI_MODEL:
         command += ["--model", CLI_MODEL]
-    if deny_tools:
-        command += ["--disallowedTools", ",".join(deny_tools)]
+    denied = list(ALWAYS_DENY)
+    for tool in deny_tools or []:
+        if tool not in denied:
+            denied.append(tool)
+    command += ["--disallowedTools", ",".join(denied)]
     if with_agents and USE_AGENTS:
         subagents = ASSETS / "subagents.json"
         if subagents.is_file():

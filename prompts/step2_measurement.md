@@ -8,6 +8,7 @@
 
 # 2. Operating Environment (工作环境与工具)
 
+- Skills 位置：本文及 skills 文件中所有以 `skills/` 开头的路径，实际位于 `research/harness_src/skills/`（相对当前工作目录）。
 - 当前工作目录: `{{TASK_DIR}}`
 - 本节点目录: `{{NODE_DIR}}`
 - 最大可用时长: **{{NODE_TIMEOUT_MIN}} 分钟**（**警告**：此数字是流水线剩余可用的**全部总时间**，包含后续占卡的模型训练/评测以及后续所有轮次，绝非给你单个节点挥霍的时间！）

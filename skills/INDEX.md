@@ -7,7 +7,11 @@
 ## 1. 模型后训练 (Post-Training) 指南
 - **[训练方案设计方法](post_train/recipe_guidelines.md)** (`skills/post_train/recipe_guidelines.md`)
   - *触发时机*：制定训练配方、构思训练相关假设、调整超参或选择训练范式时。
-  - *核心内容*：分数优先级、数值取证规则、预算可行域估算、必看信号。不含默认数值与具体方法，方案与数值来自 `research/literature.md` 的公开方案反查。
+  - *核心内容*：分数优先级、数值取证规则、必看信号。不含默认数值与具体方法，方案与数值来自 `research/literature.md` 的公开方案反查。
+
+- **[文献调研核心任务](post_train/literature_review_directives.md)** (`skills/post_train/literature_review_directives.md`)
+  - *触发时机*：由编排器注入 Step0-C Literature 节点的 Core Directives，其他节点无需阅读。
+  - *核心内容*：读懂评测、反查最强公开方案、数据候选检索路线、「prompt 来源 × 答案来源」拆分与排序依据、横向归纳、失败现象反查。
 
 - **[推理解码与停机符配置](post_train/inference_and_decoding.md)** (`skills/post_train/inference_and_decoding.md`)
   - *触发时机*：遇到输出截断、重复无意义字符、模型不停止回答，或调整 generation_config 时。
