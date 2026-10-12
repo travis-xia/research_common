@@ -30,6 +30,7 @@
   - 交付目录完整性与服务校验: `skills/engineering/vllm_serving.md`
 - **[可选] Optional Context**:
   - 环境与硬件支持指南: `skills/engineering/env_and_hardware.md`
+  - 数据下载与多连接代理: `skills/engineering/hf_download.md`
 
 ---
 

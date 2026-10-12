@@ -24,7 +24,7 @@
 - **[必读] Mandatory References**:
   - 当前评测基准任务类型定义与评测目标
 - **[可选] Optional Context**:
-  - 快速下载 HuggingFace 数据集指南: `skills/hf-download.md`
+  - 快速下载 HuggingFace 数据集指南: `skills/engineering/hf_download.md`
   - 配方优先级与数值取证规则: `skills/post_train/recipe_guidelines.md`
   - 环境与硬件支持指南: `skills/engineering/env_and_hardware.md`
 
