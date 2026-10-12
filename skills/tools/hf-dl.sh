@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # hf-dl.sh —— 本机下载 HuggingFace 数据集/模型的唯一正确姿势。
-# 前因后果与实测数字见同目录 hf-download.md；prompt 里"下载 >50MB 外部数据集前必读"
+# 前因后果与实测数字见 ../engineering/hf_download.md；prompt 里"下载 >50MB 外部数据集前必读"
 # 指的就是那篇。代理/端点已在此配好，调用方不需要再设任何环境变量。
 #
 # 用法：
@@ -22,8 +22,8 @@ command -v aria2c >/dev/null || { echo "[hf-dl] 缺少 aria2c" >&2; exit 1; }
 
 HFD="${HFD:-/root/paddlejob/rl-public/xiasheng01/xs_workdir/hf_download/hfd.sh}"
 if [[ ! -f "$HFD" ]]; then
-    # 布局兜底：skills 目录在 <xs_workdir>/myptbench/PostTrainBench/agents/research_common/skills
-    HFD="$(cd "$(dirname "$0")" && pwd)/../../../../../hf_download/hfd.sh"
+    # 布局兜底：本脚本在 <xs_workdir>/.../research_common/skills/tool 下
+    HFD="$(cd "$(dirname "$0")" && pwd)/../../../../../../hf_download/hfd.sh"
 fi
 [[ -f "$HFD" ]] || { echo "[hf-dl] 找不到 hfd.sh（可用 HFD=... 显式指定）" >&2; exit 1; }
 
