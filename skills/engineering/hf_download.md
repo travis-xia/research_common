@@ -37,15 +37,13 @@ python3 <skills目录>/tools/hf_probe.py Qwen/Qwen3-4B     # 完整 org/name（�
 python3 <skills目录>/tools/hf_probe.py NuminaMath-1.5     # 裸名也行
 ```
 
-- 输出只有 `1` / `0` 两个值：`1`=可用；`0`=无可用（不存在、空目录、或未下完）。
-- 输出 `1` 时直接用 `/root/paddlejob/rl-public/xiasheng01/xs_workdir/hf_download/<repo名>/`——
-  布局与 hf-dl.sh 产物同构：数据集按 parquet 直读，模型目录直接交给 vllm/训练。
+- 输出是给人/agent 读的文字说明（没有固定格式协议），会列出每个命中目录的名称、是否可用（非空且无 `.aria2` 残留）、完整路径，并给出结论。
+- 有可用命中时直接用 `/root/paddlejob/rl-public/xiasheng01/xs_workdir/hf_download/<目录名>/`
+— 布局与 hf-dl.sh 产物同构：数据集按 parquet 直读，模型目录直接交给 vllm/训练。
   **原地引用，不要复制或移动**。
-- 输出 `0` 时走下面的 hf-dl.sh 下载。
-- 一次只查一个 repo；答案在 stdout，退出码恒 0（仅用法错误为 2）。
+- 没有可用命中时走下面的 hf-dl.sh 下载。
+- 一次只查一个 repo；退出码恒 0（仅用法错误为 2）。
 
-**隔离规则**：预铺目录只允许按名探测，**禁止 ls/枚举/通配**。本地存量属于环境
-信息，不得影响实验选型——配方定了用哪个 repo 就用哪个，本地有没有别的无关。
 
 ## 怎么做
 

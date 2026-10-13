@@ -14,7 +14,8 @@
 - 目标评测基准: `{{BENCHMARK}}`
 - 最大可用时长: **{{NODE_TIMEOUT_MIN}} 分钟**
 - **时间管理铁律**：请严格按照 `{{WORKFLOW_OVERVIEW_PATH}}` 的全局流程安排自己的时间。必须在分配的时间窗口内完成基线评测与分析并写入产物，避免过度探查或耗时过长，把时间留给后续主干配方制定与训练。
-- 机器环境与显卡: `nvidia-smi` 显存占用为系统占卡守护进程（启动任务自动退出），只要 Processes 表无任务即可直接用卡。遇到显卡、网络下载（>50MB 需防断流）、磁盘空间等环境问题，详见 `skills/engineering/env_and_hardware.md`。
+- **机器环境与显卡**: `nvidia-smi` 显存占用为系统占卡守护进程（启动gpu任务自动退出，但是普通探测下占卡进程会一直占据显存），只要`nvidia-smi`显示"No running processes found"即可直接用卡。**不要写等待显存减少到多少的脚本！**
+遇到显卡、网络下载（>50MB 需防断流）、磁盘空间等环境问题，详见 `skills/engineering/env_and_hardware.md`。
 - 允许独占卡运行: 运行评测获取真实准确率。
 
 ---
