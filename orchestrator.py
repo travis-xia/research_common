@@ -32,7 +32,7 @@ TASK_DIR = Path.cwd().resolve()
 RES = TASK_DIR / "research"
 NODES = RES / "nodes"
 AGENT_DIR = Path(os.environ["RESEARCH_AGENT_DIR"]).resolve()
-PROMPTS = AGENT_DIR / "prompts"
+PROMPTS = AGENT_DIR / "agents"
 ASSETS = AGENT_DIR / "assets"
 TASKS_DIR = AGENT_DIR / "tasks"
 
@@ -594,7 +594,7 @@ def step0_init() -> None:
         with_agents=True,
     )
     run_step(
-        "step5_archive.md",
+        "step4_archive.md",
         "golden-archive",
         "archive",
         "archive_card.md",
@@ -688,7 +688,7 @@ def run_round(round_index: int) -> None:
     )
 
     run_step(
-        "step5_archive.md",
+        "step4_archive.md",
         "archive",
         "archive",
         "archive_card.md",
@@ -714,7 +714,7 @@ FINALIZE_PROMPT = """你是研究流水线的最终交付 agent。
 最终交付目录：{{FINAL_MODEL_PATH}}
 最终报告：{{CONTRACT_PATH}}
 
-只做下面三件事，不要训练、不要评测，不要修改 prompts、编排器源码或原始实验报告：
+只做下面三件事，不要训练、不要评测，不要修改节点提示词、编排器源码或原始实验报告：
 
 1. 选择：读取 research/ 下的 Markdown、各节点实验报告中已有的评测结果和模型路径，
    判断哪个模型最值得交付。不要依赖 state.json，也不要假设最后一个节点最好。

@@ -27,12 +27,12 @@
 - **单连接断流问题与多连接下载**：
   - 代理对**单连接**限速 ~1.4MB/s 且在恰好 **10MiB（10485760 字节）处掐断**。
   - **严禁**直接用单连接 Python（如 `load_dataset("org/repo")`、`requests`）直接拉取 >50MB 的外部大文件。
-  - **多连接下载工具**：拉取 >50MB 的数据集或模型，必须使用同目录提供的多连接脚本：
+  - **多连接下载工具**：拉取 >50MB 的数据集或模型，必须使用 `research/harness_src/tools/` 下的多连接脚本：
     ```bash
-    bash skills/hf-dl.sh <org/repo> --dataset      # 下载数据集
-    bash skills/hf-dl.sh <org/repo>                # 下载模型
+    bash research/harness_src/tools/hf-dl.sh <org/repo> --dataset      # 下载数据集
+    bash research/harness_src/tools/hf-dl.sh <org/repo>                # 下载模型
     ```
-  - 下载完成后按本地 parquet 或本地路径加载（详见 `skills/hf-download.md`）。
+  - 下载完成后按本地 parquet 或本地路径加载（详见 `skills/engineering/hf_download.md`）。
 
 ---
 

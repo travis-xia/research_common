@@ -11,7 +11,8 @@
 ```
 orchestrator.py        主编排器
 entry.sh               两个后端共用的启动脚本
-prompts/               各节点的提示词
+agents/                各节点的提示词
+tools/                 节点可直接调用的脚本（hf_probe.py、hf-dl.sh）
 assets/                guard.py、钩子配置、subagents、benchmark_profile
 tasks/post_train/      操作空间 action_space.json（由 RESEARCH_TASK_TYPE 选择）
 skills/                节点按需阅读的操作手册
@@ -22,7 +23,7 @@ skills/                节点按需阅读的操作手册
 - `agents/codex_research/solve.sh` → Codex CLI，配 `gpt-*`
 - `agents/claude_research/solve.sh` → Claude Code CLI，配 `claude-*`
 
-实验规划、运行前工程自查、训练与评测已合并到 `prompts/step3_experiment.md`；
+实验规划、运行前工程自查、训练与评测已合并到 `agents/step3_experiment.md`；
 旧的 `step3_plan.md`、`step4_engineer1_run.md`、`step4_engineer2_preflight.md`
 已删除。`assets/step_policy.json` 同样不再被读取。
 
@@ -50,7 +51,7 @@ loop:
    Step1 Judge          直接读取批量文件，选一个并写出 selected_hypothesis.md
    胜出猜想校验         编排器只校验 Judge 选出的单条方案
    Step3 Experiment     单节点串行：规划 → 开工前自查 → 占卡训练与评测
-   Step5 记录 + Archive 记账、更新 best，因果对追加进 experience_bank.md
+   Step4 记录 + Archive 记账、更新 best，因果对追加进 experience_bank.md
    ↓
 finalize: best → ./final_model
 ```
@@ -132,7 +133,7 @@ Measurement 在两类情况下触发：开局 `MEASURE_FIRST=1` 时第一轮猜�
 | Judge | `step1_judge.md` | `nodes/<nid>/judge.md`、`selected_hypothesis.md` |
 | Measurement | `step2_measurement.md` | `nodes/<nid>/measurement.md` |
 | Experiment | `step3_experiment.md` | `nodes/<nid>/experiment.md`、`model/` |
-| Archive | `step5_archive.md` | `nodes/<nid>/archive_card.md`，追加 `experience_bank.md`；Golden Run 完成后同样执行 |
+| Archive | `step4_archive.md` | `nodes/<nid>/archive_card.md`，追加 `experience_bank.md`；Golden Run 完成后同样执行 |
 
 每个节点目录里还有 `<label>.prompt.md`（收到的完整提示词）和
 `<label>.stream.jsonl`（CLI 的完整事件流）。

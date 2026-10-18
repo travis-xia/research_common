@@ -8,7 +8,7 @@
 2. **Step 1 猜想与裁决 (Hypothesis & Judge)**: 一个 agent 一次性生成至少 N 条研究方案 (`hypotheses.md`) → Judge 直接读取批量文件，优先按最终分数潜力和可行性比较，并写出 `selected_hypothesis.md`。
 3. **Step 2 行为诊断 (Measurement)**: 若候选全否或陷入平台期触发，深挖 badcase 产出诊断报告并沉淀 `research/scripts/diagnose.py`，再回流 Step 1。
 4. **Step 3 端到端实验 (Experiment)**: 对获胜猜想单节点串行完成三件事——规划实验方案、开工前自查代码与配置并就地修补、占卡训练并用统一尺子全量评测。以最终分数和可交付模型为目标。
-5. **Step 5 知识归档 (Archive)**: Golden Run 和每轮 Experiment 完成后都提炼因果对，写入经验卡片并追加到 `experience_bank.md`；后续 agent 通过 archive 摘要中的分数和模型路径自主判断 best。
+5. **Step 4 知识归档 (Archive)**: Golden Run 和每轮 Experiment 完成后都提炼因果对，写入经验卡片并追加到 `experience_bank.md`；后续 agent 通过 archive 摘要中的分数和模型路径自主判断 best。
 
 ---
 
@@ -25,7 +25,7 @@
 | **Step 1 Judge** | 直接读取批量猜想，核验并选出 Winner，同时落盘胜出猜想 | `hypotheses.md` | `research/nodes/n{seq}-judge/judge.md`、`selected_hypothesis.md` |
 | **Step 2 Measurement**| （瓶颈/全否触发）深挖日志归因，细化分面指标 | 最新评测日志、错误样本轨迹 | `research/nodes/n{seq}-measure/measurement.md`<br>`research/scripts/diagnose.py` |
 | **Step 3 Experiment** | 单节点串行：规划实验方案 → 开工前自查代码/配置并就地修补 → 占卡训练与统一尺子全量评测 | Judge 写出的 `selected_hypothesis.md` | `research/nodes/n{seq}-experiment/experiment.md`<br>`research/nodes/n{seq}-experiment/model/` |
-| **Step 5 Archive** | 结构化沉淀因果对，追加更新长期知识库 | Golden Run 或本轮猜想、方案与实测指标 | `research/nodes/n{seq}-archive/archive_card.md`<br>`research/experience_bank.md` (追加更新) |
+| **Step 4 Archive** | 结构化沉淀因果对，追加更新长期知识库 | Golden Run 或本轮猜想、方案与实测指标 | `research/nodes/n{seq}-archive/archive_card.md`<br>`research/experience_bank.md` (追加更新) |
 
 ---
 

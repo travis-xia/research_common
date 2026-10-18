@@ -3,8 +3,8 @@
 ## 何时用（触发条件）
 
 - 要**下载或 `load_dataset` 加载 >50MB 的外部数据集/模型**（OpenR1、NuminaMath、
-  MetaMathQA 这个量级）时，先读完本文再动手。统一入口是 `skills/tools/hf-dl.sh`。
-- **动手前先跑 `skills/tools/hf_probe.py`**（见下）探测本地是否已有；输出 1 直接用，输出 0 才下载。
+  MetaMathQA 这个量级）时，先读完本文再动手。统一入口是 `research/harness_src/tools/hf-dl.sh`。
+- **动手前先跑 `research/harness_src/tools/hf_probe.py`**（见下）探测本地是否已有；输出 1 直接用，输出 0 才下载。
 - 已在 `$HF_HOME/hub` 缓存里的 repo 不适用，直接加载即可（gsm8k/aime/gpqa 等已预铺）。
 
 ## 前因后果（2026-09-09 实录）
@@ -33,8 +33,8 @@ run `gsm8k_..._114749` 的 Golden Run：配方 pin 了 OpenR1-Math-220k + Numina
 ## 第 0 步：先探测本地有没有（hf_probe.py）
 
 ```bash
-python3 <skills目录>/tools/hf_probe.py Qwen/Qwen3-4B     # 完整 org/name（取尾段匹配）
-python3 <skills目录>/tools/hf_probe.py NuminaMath-1.5     # 裸名也行
+python3 research/harness_src/tools/hf_probe.py Qwen/Qwen3-4B     # 完整 org/name（取尾段匹配）
+python3 research/harness_src/tools/hf_probe.py NuminaMath-1.5     # 裸名也行
 ```
 
 - 输出是给人/agent 读的文字说明（没有固定格式协议），会列出每个命中目录的名称、是否可用（非空且无 `.aria2` 残留）、完整路径，并给出结论。
@@ -48,9 +48,9 @@ python3 <skills目录>/tools/hf_probe.py NuminaMath-1.5     # 裸名也行
 ## 怎么做
 
 ```bash
-bash <skills目录>/tools/hf-dl.sh AI-MO/NuminaMath-1.5 --dataset    # 数据集
-bash <skills目录>/tools/hf-dl.sh open-r1/OpenR1-Math-220k --dataset --include data/*   # 只要某个 config
-bash <skills目录>/tools/hf-dl.sh <org/model>                        # 模型
+bash research/harness_src/tools/hf-dl.sh AI-MO/NuminaMath-1.5 --dataset    # 数据集
+bash research/harness_src/tools/hf-dl.sh open-r1/OpenR1-Math-220k --dataset --include data/*   # 只要某个 config
+bash research/harness_src/tools/hf-dl.sh <org/model>                        # 模型
 ```
 
 - **断点续传**：Ctrl-C 中断后重跑同一命令即续传（hfd.sh 自带 manifest diff）。

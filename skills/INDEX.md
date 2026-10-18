@@ -30,7 +30,7 @@
 
 - **[HuggingFace 下载与本地探测](engineering/hf_download.md)** (`skills/engineering/hf_download.md`)
   - *触发时机*：需要从 HuggingFace 拉取大于 50MB 的大型数据集或权重时；以及任何下载动作之前。
-  - *核心内容*：先 `tools/hf_probe.py` 按名探测本地预铺目录（只探测不枚举，防止本地存量干扰选型）；无可用再用 aria2c 多连接 `tools/hf-dl.sh` 下载并规避 10MiB 断流。
+  - *核心内容*：先 `research/harness_src/tools/hf_probe.py` 按名探测本地预铺目录（只探测不枚举，防止本地存量干扰选型）；无可用再用 aria2c 多连接 `research/harness_src/tools/hf-dl.sh` 下载并规避 10MiB 断流。
 
 - **[模型交付与 vLLM 起服检查](engineering/vllm_serving.md)** (`skills/engineering/vllm_serving.md`)
   - *触发时机*：在 Engineer_2 开工前检查或 Engineer_1 训练完成准备评测/交付时。
