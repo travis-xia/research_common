@@ -9,7 +9,8 @@
 ## 目录
 
 ```
-orchestrator.py        主编排器
+orchestrator.py        主编排器（只保留流程骨架）
+harness_utils/         编排器辅助模块：config / common / budget / prompting / cli_runner / finalize
 entry.sh               两个后端共用的启动脚本
 agents/                各节点的提示词
 tools/                 节点可直接调用的脚本（hf_probe.py、hf-dl.sh）
