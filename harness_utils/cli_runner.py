@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import re
 import signal
 import subprocess
 import threading
@@ -14,13 +16,22 @@ from .budget import remaining_h
 from .common import log
 from .config import (
     ALWAYS_DENY, ASSETS, CLAUDE, CLI, CLI_MODEL, CODEX, CODEX_EFFORT, DRY,
-    EFFORT, FINALIZE_RESERVE_MIN, PROTOCOL_SECTIONS, RES, TASK_DIR, USE_AGENTS,
+    EFFORT, FINALIZE_RESERVE_MIN, PROTOCOL_SECTIONS, RATE_LIMIT_BACKOFF_MAX_S,
+    RATE_LIMIT_BACKOFF_S, RATE_LIMIT_RETRIES, RES, TASK_DIR, USE_AGENTS,
 )
 
 
 _ACTIVE_PROCS: set[subprocess.Popen] = set()
 _ACTIVE_LOCK = threading.Lock()
 _RESEARCH_STOP = threading.Event()
+
+# 只在“进程失败 + 流末尾出现限流特征”时才判定为 429，避免把 agent 工具输出里
+# 偶然出现的 429 字样误认成网关限流。
+_RATE_LIMIT_RE = re.compile(
+    r"API Error:?\s*429|\b429\s+Too Many Requests|[\"']?status[\"']?\s*[:=]\s*429"
+    r"|rate_limit_error|too many requests", re.I)
+_IS_ERROR_RE = re.compile(r"\"is_error\"\s*:\s*true")
+_TAIL_BYTES = 16384
 
 
 def log_artifact(label: str, *paths, node_path=None) -> None:
@@ -120,15 +131,31 @@ def _unregister_process(process: subprocess.Popen) -> None:
         _ACTIVE_PROCS.discard(process)
 
 
-def run_cli(
+def _hit_rate_limit(stream_path: Path, start: int, rc: int) -> bool:
+    """本次尝试（流文件 start 偏移之后）是否因 429 限流而失败。"""
+    try:
+        with stream_path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(start, handle.tell() - _TAIL_BYTES))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    if rc == 0 and not _IS_ERROR_RE.search(tail):
+        return False
+    return bool(_RATE_LIMIT_RE.search(tail))
+
+
+def _run_cli_once(
     prompt: str,
     node_path: Path,
     label: str,
     phase: str,
-    deny_tools: list[str] | None = None,
-    with_agents: bool = False,
-    stoppable: bool = True,
-) -> int:
+    deny_tools: list[str] | None,
+    with_agents: bool,
+    stoppable: bool,
+    append: bool,
+) -> tuple[int, bool]:
+    """跑一次 CLI；返回 (rc, 是否因 429 失败)。append=True 时续写同一个 stream 文件。"""
     node_path.mkdir(parents=True, exist_ok=True)
     (node_path / f"{label}.prompt.md").write_text(prompt, encoding="utf-8")
     stream_path = node_path / f"{label}.stream.jsonl"
@@ -137,7 +164,7 @@ def run_cli(
             json.dumps({"type": "dry_run", "label": label}) + "\n",
             encoding="utf-8",
         )
-        return dry_output(label, node_path, prompt)
+        return dry_output(label, node_path, prompt), False
 
     command, extra_env = cli_command(node_path, deny_tools, with_agents)
     env = child_env(phase)
@@ -147,6 +174,7 @@ def run_cli(
 
     log(f"启动 {label}: {' '.join(command[:3])}")
     started = time.time()
+    start_offset = stream_path.stat().st_size if append and stream_path.exists() else 0
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -162,7 +190,7 @@ def run_cli(
         kill_process_groups([process])
     events = 0
     try:
-        with stream_path.open("w", encoding="utf-8") as stream:
+        with stream_path.open("a" if append else "w", encoding="utf-8") as stream:
             assert process.stdin is not None
             assert process.stdout is not None
             process.stdin.write(prompt)
@@ -170,11 +198,50 @@ def run_cli(
             for line in process.stdout:
                 stream.write(line)
                 events += 1
-        return process.wait()
+        rc = process.wait()
     finally:
         _unregister_process(process)
         log(f"{label}: rc={process.returncode} events={events} "
             f"elapsed={int(time.time() - started)}s")
+    return rc, _hit_rate_limit(stream_path, start_offset, rc)
+
+
+def run_cli(
+    prompt: str,
+    node_path: Path,
+    label: str,
+    phase: str,
+    deny_tools: list[str] | None = None,
+    with_agents: bool = False,
+    stoppable: bool = True,
+) -> int:
+    """跑 CLI；若因 429 / Too Many Requests 失败，指数退避后整步重跑，至多 RATE_LIMIT_RETRIES 次。
+
+    重跑是用同一份 prompt 起新会话，已落盘的产物由 agent 自己读取接续。
+    研究阶段被终止（_RESEARCH_STOP）或剩余预算不够等待时不再重试。
+    """
+    attempt = 0
+    while True:
+        rc, limited = _run_cli_once(
+            prompt, node_path, label, phase, deny_tools, with_agents,
+            stoppable, append=attempt > 0)
+        if not limited:
+            return rc
+        if attempt >= RATE_LIMIT_RETRIES:
+            log(f"{label}: 429 已重试 {attempt} 次仍失败，放弃")
+            return rc
+        delay = min(RATE_LIMIT_BACKOFF_MAX_S, RATE_LIMIT_BACKOFF_S * 2 ** attempt)
+        delay *= random.uniform(0.8, 1.2)
+        if remaining_h() * 3600 <= delay:
+            log(f"{label}: 429 但剩余预算不足 {delay:.0f}s，不再重试")
+            return rc
+        attempt += 1
+        log(f"{label}: 429 限流，{delay:.0f}s 后第 {attempt}/{RATE_LIMIT_RETRIES} 次重试")
+        if stoppable:
+            if _RESEARCH_STOP.wait(delay):
+                return rc
+        else:
+            time.sleep(delay)
 
 
 def dry_output(label: str, node_path: Path, prompt: str) -> int:

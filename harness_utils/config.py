@@ -36,6 +36,10 @@ N_HYPO = max(1, int(os.environ.get("RESEARCH_N_HYPO", "3")))
 MEASURE_FIRST = os.environ.get("RESEARCH_MEASURE_FIRST", "1") == "1"
 FINALIZE_RESERVE_MIN = float(os.environ.get(
     "RESEARCH_FINALIZE_RESERVE_MIN", "20"))
+# CLI 因网关 429 / Too Many Requests 失败时的指数退避重试（次数、起始秒、单次上限秒）
+RATE_LIMIT_RETRIES = int(os.environ.get("RESEARCH_429_RETRIES", "10"))
+RATE_LIMIT_BACKOFF_S = float(os.environ.get("RESEARCH_429_BACKOFF_S", "30"))
+RATE_LIMIT_BACKOFF_MAX_S = float(os.environ.get("RESEARCH_429_BACKOFF_MAX_S", "300"))
 RULER_N = int(os.environ.get("RESEARCH_RULER_N", "300"))
 RULER_MIN_N = int(os.environ.get("RESEARCH_RULER_MIN_N", "200"))
 OFFICIAL_CHECK_LIMIT = int(os.environ.get(

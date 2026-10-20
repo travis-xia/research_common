@@ -26,7 +26,12 @@
     },
     "alignment_method": {
       "targets": ["Training.Method"],
-      "examples": ["full_parameter_sft", "dpo", "grpo", "rft", "curriculum", "model_soup"],
+      "examples": ["full_parameter_sft", "dpo", "grpo", "rft", "curriculum"],
+      "priority": "choose_by_cost_and_evidence"
+    },
+    "weight_space": {
+      "targets": ["Model.WeightSpace"],
+      "examples": ["checkpoint_averaging", "wise_ft_base_interpolation", "model_soup", "ties_dare_merge"],
       "priority": "choose_by_cost_and_evidence"
     }
   },
@@ -50,14 +55,15 @@
         "InternalArch": {"desc": "模型架构微调 / 层选择、注意力机制改造、位置编码、剪枝稀疏化等", "layer": "strategy", "frozen": true,
           "frozen_reason": "final_model 须在同一环境下被 evaluate.py 的 vLLM 直接加载，本任务不改模型结构"},
         "ExternalModule": {"desc": "外挂 Adapter / 辅助 Head / 外部模块、Verifier/PRM 外挂、轻量接入层等", "layer": "strategy", "frozen": true,
-          "frozen_reason": "评测只加载 final_model 单模型单次生成，外挂模块与 verifier 不会被调用"}
+          "frozen_reason": "评测只加载 final_model 单模型单次生成，外挂模块与 verifier 不会被调用"},
+        "WeightSpace": {"desc": "权重空间后处理（不改结构、产出单一标准权重）：checkpoint 平均 / 离线 EMA / SWA、Model Soup（uniform / greedy）、Task Arithmetic / TIES / DARE / SLERP 等多模型合并、LoRA merge 回全量权重等；输入模型须同架构同 tokenizer，产物须能被 vLLM 直接加载。训练中在线维护的 EMA 影子权重属于 Training.Method", "layer": "strategy", "frozen": false}
       }
     },
     "Training": {
       "layer": "strategy",
       "modules": {
         "Data": {"desc": "数据配比、筛选、拒绝采样、**本地强教师蒸馏**、rubric/task-shaped 合成数据、多轮上下文与末轮重写、定向 patch、清洗与难度分级等；教师只允许用于本地离线造数/打标，不得替代指定学生基座", "layer": "strategy", "frozen": false},
-        "Method": {"desc": "loss、监督信号、更新规则、全参 SFT / LoRA、SFT 冷启动后 RL、Curriculum、Model Merge，以及 DPO / GRPO / PPO 等对齐与学习范式（不限于此）", "layer": "strategy", "frozen": false},
+        "Method": {"desc": "loss、监督信号、更新规则、全参 SFT / LoRA、继续SFT直至饱和、原有加新高质数据一起从零开始训练、SFT 冷启动后 RL、Curriculum，以及 DPO / GRPO / PPO 等对齐与学习范式（不限于此）", "layer": "strategy", "frozen": false},
         "Hyperparams": {"desc": "LR、Batch Size、Epochs、Warmup、优化器及调度策略超参等", "layer": "exec", "frozen": false}
       }
     },
