@@ -25,11 +25,12 @@ _ACTIVE_PROCS: set[subprocess.Popen] = set()
 _ACTIVE_LOCK = threading.Lock()
 _RESEARCH_STOP = threading.Event()
 
-# 只在“进程失败 + 流末尾出现限流特征”时才判定为 429，避免把 agent 工具输出里
-# 偶然出现的 429 字样误认成网关限流。
+# 只在“进程失败 + 流末尾出现限流/网关错误特征”时才判定为 429/502/504/529，避免把
+# agent 工具输出里偶然出现的这些数字误认成网关错误。
 _RATE_LIMIT_RE = re.compile(
-    r"API Error:?\s*429|\b429\s+Too Many Requests|[\"']?status[\"']?\s*[:=]\s*429"
-    r"|rate_limit_error|too many requests", re.I)
+    r"API Error:?\s*(?:429|502|504|529)|\b429\s+Too Many Requests|\b502\s+Bad Gateway"
+    r"|\b504\s+Gateway\s+Time-?out|[\"']?status[\"']?\s*[:=]\s*(?:429|502|504|529)"
+    r"|rate_limit_error|overloaded_error|too many requests", re.I)
 _IS_ERROR_RE = re.compile(r"\"is_error\"\s*:\s*true")
 _TAIL_BYTES = 16384
 
@@ -132,7 +133,7 @@ def _unregister_process(process: subprocess.Popen) -> None:
 
 
 def _hit_rate_limit(stream_path: Path, start: int, rc: int) -> bool:
-    """本次尝试（流文件 start 偏移之后）是否因 429 限流而失败。"""
+    """本次尝试（流文件 start 偏移之后）是否因 429 限流 / 502、504、529 网关错误而失败。"""
     try:
         with stream_path.open("rb") as handle:
             handle.seek(0, 2)
@@ -215,7 +216,7 @@ def run_cli(
     with_agents: bool = False,
     stoppable: bool = True,
 ) -> int:
-    """跑 CLI；若因 429 / Too Many Requests 失败，指数退避后整步重跑，至多 RATE_LIMIT_RETRIES 次。
+    """跑 CLI；若因 429 / Too Many Requests / 502 / 504 / 529 失败，指数退避后整步重跑，至多 RATE_LIMIT_RETRIES 次。
 
     重跑是用同一份 prompt 起新会话，已落盘的产物由 agent 自己读取接续。
     研究阶段被终止（_RESEARCH_STOP）或剩余预算不够等待时不再重试。
@@ -228,15 +229,15 @@ def run_cli(
         if not limited:
             return rc
         if attempt >= RATE_LIMIT_RETRIES:
-            log(f"{label}: 429 已重试 {attempt} 次仍失败，放弃")
+            log(f"{label}: 429/502/504/529 已重试 {attempt} 次仍失败，放弃")
             return rc
         delay = min(RATE_LIMIT_BACKOFF_MAX_S, RATE_LIMIT_BACKOFF_S * 2 ** attempt)
         delay *= random.uniform(0.8, 1.2)
         if remaining_h() * 3600 <= delay:
-            log(f"{label}: 429 但剩余预算不足 {delay:.0f}s，不再重试")
+            log(f"{label}: 429/502/504/529 但剩余预算不足 {delay:.0f}s，不再重试")
             return rc
         attempt += 1
-        log(f"{label}: 429 限流，{delay:.0f}s 后第 {attempt}/{RATE_LIMIT_RETRIES} 次重试")
+        log(f"{label}: 429/502/504/529 网关错误，{delay:.0f}s 后第 {attempt}/{RATE_LIMIT_RETRIES} 次重试")
         if stoppable:
             if _RESEARCH_STOP.wait(delay):
                 return rc
