@@ -48,8 +48,8 @@ Golden Run（n000-golden-run）
    ↓
 loop:
    [Step2 Measurement]  候选全被否决时触发，诊断后回流 Step1
-   Step1 批量猜想       一个 agent 一次性提出至少 N 条短猜想
-   Step1 Judge          直接读取批量文件，选一个并写出 selected_hypothesis.md
+   Step1 批量猜想       一个 agent 一次性提出至少 N 条短猜想，按优先级排序
+   Step1 Judge          按序逐个筛查，首个通过的写出 selected_hypothesis.md
    胜出猜想校验         编排器只校验 Judge 选出的单条方案
    Step3 Experiment     单节点串行：规划 → 开工前自查 → 占卡训练与评测
    Step4 记录 + Archive 记账、更新 best，因果对追加进 experience_bank.md
@@ -88,7 +88,8 @@ finalize: best → ./final_model
 ### 硬规则前筛
 
 Step1 由一个 agent 一次性写出至少 `RESEARCH_N_HYPO` 条短猜想到
-`hypotheses.md`，Judge 直接读取这一个批量文件并比较候选。
+`hypotheses.md`，并按优先级排序（Candidate 0 最高）。Judge 不再比较候选，
+只按序号逐个筛掉盲目调参、与已有实验重复、缺少具体做法的方案，首个通过即放行。
 
 Judge 选中后另写一份 `selected_hypothesis.md`。编排器只对这份胜出猜想做
 硬校验：候选主动弃权、靶点不在 `action_space.json` 或落在冻结坐标、层级越权、
