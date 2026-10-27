@@ -15,7 +15,7 @@
 - 最大可用时长: **{{NODE_TIMEOUT_MIN}} 分钟**
 - **时间管理铁律**：请严格按照 `{{WORKFLOW_OVERVIEW_PATH}}` 的全局流程安排自己的时间。作为冷启动三路并行的一环，必须边调研边落盘，严禁过度搜索与超时拖延，把时间留给后续主干配方制定与训练。
 - 机器环境与显卡: `nvidia-smi` 显存占用为系统占卡守护进程（启动任务自动退出），只要 Processes 表无任务即可直接用卡。遇到显卡、网络下载（>50MB 需防断流）、磁盘空间等环境问题，详见 `skills/engineering/env_and_hardware.md`。
-- **本 run 的约束**（反查到的方案要按这些约束改写）：只能微调 `{{MODEL}}`；不能调用外部闭源 API，但允许在本机 GPU 上部署开源模型离线生成或标注数据；本机只有单卡（80GB 显存），任务总时长约 10 小时（剩余墙钟看 `bash timer.sh`），其中能留给本机生成数据的时间约 1–2 小时；官方评测只采样一次，交付目录中的 `generation_config.json` 就是全部解码策略（本机 vLLM 能读取的键见 `skills/post_train/inference_and_decoding.md`）。
+- **本 run 的约束**（反查到的方案要按这些约束改写）：只能微调 `{{MODEL}}`；不能调用外部闭源 API，但允许在本机 GPU 上部署开源模型离线生成或标注数据；本机只有单卡（80GB 显存），任务多轮迭代总时长约 10 小时（剩余墙钟看 `bash timer.sh`）；官方评测只采样一次，交付目录中的 `generation_config.json` 就是全部解码策略（本机 vLLM 能读取的键见 `skills/post_train/inference_and_decoding.md`）。
 
 ---
 
@@ -23,8 +23,8 @@
 
 - **[必读] Mandatory References**:
   - 当前评测基准任务类型定义与评测目标
+  - 快速下载 HuggingFace 数据集和模型指南: `skills/engineering/hf_download.md`
 - **[可选] Optional Context**:
-  - 快速下载 HuggingFace 数据集指南: `skills/engineering/hf_download.md`
   - 配方优先级与数值取证规则: `skills/post_train/recipe_guidelines.md`
   - 环境与硬件支持指南: `skills/engineering/env_and_hardware.md`
 
@@ -41,7 +41,6 @@
   - 严禁直接查找、加载或统计当前 Benchmark 的测试集题目与答案（包括用 `load_dataset` 读测试集看格式），也不得查找泄露刷分代码；题型格式从评测代码与模板中获取。
   - 严禁爬取测试集内容。
   - 严禁下载使用要训练的基座模型的官方后训练版本。比如训练Qwen3-4b-base时，严禁使用其官方后训练版本Qwen3-4b-Instruct/Thinking。
-  - 时间截止（硬约束，所有步骤与子 agent 都适用）：只允许使用 2026-03-01（含）及之前发布的模型、数据集。
 
 - **Output Requirements (产物契约与输出限制)**:
   - 必须输出产物文件: `{{CONTRACT_PATH}}`

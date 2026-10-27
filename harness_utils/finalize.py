@@ -13,7 +13,7 @@ from .prompting import render
 
 
 FINALIZE_PROMPT = """你是研究流水线的最终交付 agent。
-剩余时间约 {{REMAINING_MIN}} 分钟，到点会被强制终止。
+剩余时间约 {{REMAINING_MIN}} 分钟，到点会被强制终止。你应该边写边更新，防止被kill时无产物。
 
 当前工作目录：{{TASK_DIR}}
 研究目录：{{RESEARCH_DIR}}
